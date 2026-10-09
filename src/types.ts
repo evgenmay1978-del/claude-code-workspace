@@ -11,6 +11,9 @@ export interface Session {
 export interface Project {
   id: string
   name: string
+  description: string
+  instructions: string
+  defaultModel: string
   repo: string
   branch: string
   color: string
@@ -38,4 +41,5 @@ export interface ChangeFile {
   path: string
   kind: 'M' | 'A' | 'D'
   staged: boolean
+  unstaged?: boolean
 }

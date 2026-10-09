@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Polar Workspace",
+  "short_name": "Polar",
+  "description": "Private web workspace for projects, chats, files, and the official Claude Code CLI.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#071827",
+  "theme_color": "#071827",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
