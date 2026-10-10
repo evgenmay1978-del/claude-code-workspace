@@ -33,6 +33,12 @@ services:
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
       CLAUDE_ENABLED: ${CLAUDE_ENABLED:-1}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
+      TZ: ${TZ:-America/Los_Angeles}
+      LANG: ${LANG:-en_US.UTF-8}
+      LC_ALL: ${LC_ALL:-en_US.UTF-8}
+      CLAUDE_STREAM_TIMEOUT_MS: ${CLAUDE_STREAM_TIMEOUT_MS:-1800000}
+      MAX_CONCURRENT_STREAMS: ${MAX_CONCURRENT_STREAMS:-3}
+      CLAUDE_STREAM_HEARTBEAT_MS: ${CLAUDE_STREAM_HEARTBEAT_MS:-25000}
     volumes:
       - polar_data:/data
       - polar_workspaces:/workspaces

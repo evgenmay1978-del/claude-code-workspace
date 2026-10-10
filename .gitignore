@@ -2,10 +2,11 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
-.env.*
+.env.local
+.env.*.local
 .data/
 dist-server/
-workspaces/
+/workspaces/
 backups/
 *.sqlite
 *.sqlite-shm

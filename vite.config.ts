@@ -13,7 +13,6 @@ export default defineConfig({
     },
   },
   server: {
-    allowedHosts: ['3000-isc6cyi03hvx70o3mzl9q-3fed1ece.us1.manus.computer'],
     host: '0.0.0.0',
     port: 3000,
     strictPort: true,

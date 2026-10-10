@@ -2,6 +2,12 @@
 
 A private, single-owner web workspace for Claude Code. It combines project conversations, local chat history, project files, Git status/diff/staging/commit, private attachments, and a real PTY terminal in a responsive desktop/mobile PWA.
 
+> **Коротко по-русски.** Приватное self-hosted веб-приложение «Polar Workspace»: чаты, проекты,
+> файлы, Git и настоящий терминал в браузере. Все запросы уходят в **официальный Claude Code CLI**
+> по подписке — без API-ключей, SDK и посредников. Ставится на свой Linux-VPS через Docker Compose
+> и Caddy: `./scripts/setup.sh` → откройте `https://ваш-домен` → создайте владельца → в проекте
+> откройте **Терминал** и выполните `claude`, чтобы пройти официальный вход. Подробности ниже.
+
 > **Not an Anthropic product.** This project launches the unmodified official Claude Code CLI. It does not use the Anthropic Messages API, an Anthropic SDK, an API key, or a proxy. It is designed for the server owner’s personal workspace only. Do not expose it as a multi-user service or route your subscription credentials/usage for other people. Review Anthropic’s current [Claude Code Legal & Compliance](https://docs.anthropic.com/en/docs/claude-code/legal-and-compliance) and plan terms before use.
 
 The application has its own local history and project data. It does **not** sync with Claude.ai chats, account settings, plan usage, or limits. Requests run only after the owner sends them and consume whatever limits apply to the owner’s official Claude Code login.
@@ -73,6 +79,8 @@ docker compose up -d --build
 
 The named data volumes survive rebuilds and container replacement. Do not run `docker compose down -v` unless you intend to delete all application data and CLI configuration.
 
+Run this at least once a month: `DISABLE_AUTOUPDATER=1` keeps the bundled Claude Code CLI pinned, and Anthropic periodically raises the minimum supported CLI version — a stale binary starts failing with an unclear error. After updating, check the in-app Terminal: `claude --version`.
+
 ## Mobile / PWA installation
 
 Open the HTTPS address on the phone after signing in:
@@ -113,6 +121,8 @@ The restore script validates the archive layout, stops the app, and requires you
 
 - Change domain and origin in `.env` together: `POLAR_DOMAIN` and `PUBLIC_ORIGIN` must match the public HTTPS origin. Keep `SESSION_COOKIE_SECURE=1` for HTTPS.
 - `CLAUDE_ENABLED=1` enables the CLI-backed chat route. No `ANTHROPIC_API_KEY` is needed or passed to the CLI child process.
+- `TZ` (default `America/Los_Angeles`) plus `LANG`/`LC_ALL` (`en_US.UTF-8`) set the container locale so the CLI timestamps match the owner's time zone.
+- `CLAUDE_STREAM_TIMEOUT_MS` (default 30 minutes) cancels a hung CLI run, `MAX_CONCURRENT_STREAMS` (default 3) caps parallel runs, `CLAUDE_STREAM_HEARTBEAT_MS` (default 25 s) keeps SSE alive through proxies. A second parallel run for the same chat is rejected with `409 stream_in_progress`.
 - Health check: `GET /_app/health` (intentionally unauthenticated for container readiness).
 - Application logs: `docker compose logs -f polar-app`; proxy/TLS logs: `docker compose logs -f caddy`.
 - Restart services after changing `.env`: `docker compose up -d`.
