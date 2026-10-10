@@ -1,12 +1,13 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Circle, FolderKanban, GitBranch, MessageSquare, PanelLeft, PanelRightClose, Plus, Settings2, ShieldCheck, TerminalSquare, X } from 'lucide-react'
-import type { ChatMessage, Project, ProjectFile, Session, View } from './types'
+import type { AttachmentInfo, ChatMessage, Project, ProjectFile, Session, View } from './types'
 import { api, toUiProject, type AuthStatus, type CliStatus, type GitStatus, type MessageSearchResult, type ProjectRecord } from './lib/api'
 import { AuthGate } from './components/AuthGate'
 import { Sidebar, NavigationRail } from './components/Sidebar'
 import { ContextPanel } from './components/ContextPanel'
 import { SettingsModal } from './components/SettingsModal'
-import { ChatView, FilesView } from './components/Workspaces'
+import { ChatView } from './components/ChatView'
+import { FilesView } from './components/Workspaces'
 import { SourceControlView } from './components/SourceControl'
 
 const TerminalView = lazy(() => import('./components/TerminalView').then(module => ({ default: module.TerminalView })))
@@ -55,6 +56,8 @@ function App() {
   const [view, setView] = useState<View>('Chat')
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [attachmentQueues, setAttachmentQueues] = useState<Record<string, AttachmentInfo[]>>({})
+  const [uploadBusy, setUploadBusy] = useState(false)
   const [selectedFile, setSelectedFile] = useState('')
   const [projectSearch, setProjectSearch] = useState('')
   const [messageSearchResults, setMessageSearchResults] = useState<MessageSearchResult[]>([])
@@ -74,6 +77,8 @@ function App() {
 
   const activeProject = projects.find(project => project.id === activeProjectId) ?? null
   const activeSession = activeProject?.sessions.find(session => session.id === activeSessionId) ?? activeProject?.sessions[0] ?? null
+  const sessionQueueKey = activeProject && activeSession ? `${activeProject.id}:${activeSession.id}` : ''
+  const pendingAttachments = sessionQueueKey ? attachmentQueues[sessionQueueKey] ?? [] : []
   const changes = gitStatus?.changes ?? []
   const workspaceTitle = useMemo(() => view === 'Source Control' ? 'Source Control' : view, [view])
   const contextCount = files.filter(file => file.kind === 'file' && file.context).length
@@ -233,14 +238,45 @@ function App() {
     }
   }
 
+  const uploadFiles = async (selected: File[]) => {
+    if (!activeProject || !activeSession || busy || uploadBusy) return
+    const key = `${activeProject.id}:${activeSession.id}`
+    const existing = attachmentQueues[key] ?? []
+    const candidates = selected.slice(0, Math.max(0, 8 - existing.length))
+    if (candidates.length < selected.length) showToast('В одном сообщении можно прикрепить не более 8 файлов.')
+    if (!candidates.length) return
+    setUploadBusy(true)
+    const completed: AttachmentInfo[] = []
+    try {
+      for (const file of candidates) {
+        if (file.size > 20 * 1024 * 1024) { showToast(`${file.name}: файл больше лимита 20 МБ.`); continue }
+        completed.push(await api.uploadAttachment(activeProject.id, activeSession.id, file))
+      }
+      if (completed.length) setAttachmentQueues(current => ({ ...current, [key]: [...(current[key] ?? []), ...completed] }))
+    } catch (cause) {
+      if (completed.length) setAttachmentQueues(current => ({ ...current, [key]: [...(current[key] ?? []), ...completed] }))
+      showToast(cause instanceof Error ? cause.message : 'Не удалось загрузить вложение.')
+    } finally { setUploadBusy(false) }
+  }
+
+  const removeQueuedAttachment = (attachmentId: string) => {
+    if (!activeProject || !activeSession) return
+    const key = `${activeProject.id}:${activeSession.id}`
+    setAttachmentQueues(current => ({ ...current, [key]: (current[key] ?? []).filter(item => item.id !== attachmentId) }))
+    void api.deleteAttachment(activeProject.id, activeSession.id, attachmentId).catch(cause => showToast(cause instanceof Error ? cause.message : 'Не удалось удалить вложение.'))
+  }
+
   const sendMessage = useCallback((content: string, model: 'sonnet' | 'opus' | 'haiku' = 'sonnet', webSearch = false) => {
-    if (!activeProject || !activeSession || busy) return
-    const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content, time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
+    if (!activeProject || !activeSession || busy || uploadBusy) return
+    const queueKey = `${activeProject.id}:${activeSession.id}`
+    const queuedAttachments = attachmentQueues[queueKey] ?? []
+    const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content, attachments: queuedAttachments, time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
     const assistantId = `assistant-${Date.now()}`
     setActivity([])
     setBusy(true)
     setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '', time: 'сейчас' }])
-    void api.streamMessage({ projectId: activeProject.id, sessionId: activeSession.id, content, model, webSearch, contextFiles: files.filter(file => file.kind === 'file' && file.context).map(file => file.path) }, event => {
+    void api.streamMessage({ projectId: activeProject.id, sessionId: activeSession.id, content, model, webSearch, contextFiles: files.filter(file => file.kind === 'file' && file.context).map(file => file.path), attachmentIds: queuedAttachments.map(file => file.id) }, event => {
+      if (event.type === 'started' && queuedAttachments.length) setAttachmentQueues(current => ({ ...current, [queueKey]: [] }))
       if (event.type === 'delta') setMessages(current => current.map(message => message.id === assistantId ? { ...message, content: message.content + event.text } : message))
       if (event.type === 'activity') setActivity(current => [...current, event.tool])
       if (event.type === 'done') {
@@ -257,7 +293,7 @@ function App() {
         showToast(event.message)
       }
     }, error => { setBusy(false); setActiveController(null); setMessages(current => current.filter(message => message.id !== assistantId)); showToast(error.message) }).then(setActiveController)
-  }, [activeProject, activeSession, busy, files, refreshGit, showToast])
+  }, [activeProject, activeSession, attachmentQueues, busy, files, refreshGit, showToast, uploadBusy])
 
   const stopMessage = () => {
     activeController?.abort()
@@ -312,7 +348,7 @@ function App() {
       </header>
       <div className="workspace-subbar"><div className="view-tabs">{viewEntries.map(({ key, icon: Icon }) => <button key={key} className={`view-tab${view === key ? ' is-active' : ''}`} onClick={() => setView(key)}><Icon size={14} strokeWidth={1.9} /><span>{key === 'Source Control' ? 'Source Control' : key === 'Chat' ? 'Чат' : key === 'Terminal' ? 'Shell' : 'Файлы'}</span>{key === 'Source Control' && <span className="tab-count">{changes.length}</span>}</button>)}</div><div className="subbar-actions"><span className="subbar-session"><span className={`session-indicator session-${activeSession.status}`} />{activeSession.title}</span><button className="context-toggle icon-button" onClick={() => setContextOpen(current => !current)} aria-label="Переключить контекст" aria-expanded={contextOpen} title="Контекст"><PanelRightClose size={15} /></button><button className="new-session-button" onClick={() => { void createSession() }}><Plus size={14} /><span>Новый чат</span></button></div></div>
       <div className="workspace-body"><section className={`work-area work-area--${view.toLowerCase().replace(' ', '-')}`}>
-        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} onSend={sendMessage} onResend={value => sendMessage(value)} onStop={stopMessage} />}
+        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} attachments={pendingAttachments} uploadBusy={uploadBusy} webSearchAvailable={Boolean(cliStatus?.webSearchAvailable)} onUploadFiles={files => { void uploadFiles(files) }} onRemoveAttachment={removeQueuedAttachment} onSend={sendMessage} onResend={value => sendMessage(value)} onStop={stopMessage} />}
         {view === 'Terminal' && <Suspense fallback={<div className="file-loading">Загружаем терминал…</div>}><TerminalView project={activeProject} terminalId={terminalIds[activeProject.id] ?? null} onTerminalIdChange={updateTerminalId} /></Suspense>}
         {view === 'Files' && <FilesView projectId={activeProject.id} files={files} selectedFile={selectedFile} projectName={activeProject.name} branch={gitStatus?.branch ?? ''} onSelectFile={setSelectedFile} onRefresh={() => { void refreshFiles() }} />}
         {view === 'Source Control' && <SourceControlView status={gitStatus} onRefresh={() => { void refreshGit(activeProject.id) }} onInitialize={() => { void initializeGit() }} onToggleStaged={path => { void toggleStaged(path) }} onCommit={message => { void commitChanges(message) }} onOpenFile={path => { setSelectedFile(path); setView('Files') }} project={activeProject} />}

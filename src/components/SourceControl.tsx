@@ -1,98 +1,80 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpRight, Check, ChevronDown, FileCode2, FileDiff, GitBranch, GitCommitHorizontal, GitPullRequest, MoreHorizontal, Plus, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, GitBranch, GitCommitHorizontal, GitPullRequest, RefreshCw, RotateCcw, TerminalSquare } from 'lucide-react'
 import type { Project } from '../types'
-import { api, type GitStatus } from '../lib/api'
+import type { GitStatus } from '../lib/api'
+import { api } from '../lib/api'
 
-const labelOf = (file: string) => file.split('/').slice(-2).join('/')
-
-export function SourceControlView({ status, onRefresh, onInitialize, onToggleStaged, onCommit, onOpenFile, project }: {
+interface Props {
+  project: Project
   status: GitStatus | null
   onRefresh: () => void
   onInitialize: () => void
   onToggleStaged: (path: string) => void
   onCommit: (message: string) => void
   onOpenFile: (path: string) => void
-  project: Project
-}) {
-  const changes = status && status.initialized ? status.changes : []
+}
+
+export function SourceControlView({ project, status, onRefresh, onInitialize, onToggleStaged, onCommit, onOpenFile }: Props) {
+  const changes = status?.changes ?? []
   const [selected, setSelected] = useState('')
-  const [diff, setDiff] = useState({ staged: '', unstaged: '' })
   const [commitMessage, setCommitMessage] = useState('')
+  const [diff, setDiff] = useState('')
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [error, setError] = useState('')
+  const stagedCount = changes.filter(file => file.staged).length
 
   useEffect(() => {
-    if (!changes.length) { setSelected(''); return }
-    if (!changes.some(change => change.path === selected)) setSelected(changes[0].path)
+    if (!changes.some(file => file.path === selected)) setSelected(changes[0]?.path ?? '')
   }, [changes, selected])
 
   useEffect(() => {
-    if (!selected) { setDiff({ staged: '', unstaged: '' }); return }
     let current = true
+    if (!selected || !status?.initialized) { setDiff(''); return }
+    setDiffLoading(true); setError('')
     api.gitDiff(project.id, selected)
-      .then(result => { if (current) setDiff(result) })
-      .catch(() => { if (current) setDiff({ staged: '', unstaged: '' }) })
+      .then(result => { if (current) setDiff([result.staged, result.unstaged].filter(Boolean).join('\n')) })
+      .catch(cause => { if (current) setError(cause instanceof Error ? cause.message : 'Не удалось загрузить diff.') })
+      .finally(() => { if (current) setDiffLoading(false) })
     return () => { current = false }
-  }, [project.id, selected, status])
-
-  const stagedCount = changes.filter(change => change.staged).length
-  const current = changes.find(change => change.path === selected)
-  const added = (diff.unstaged || diff.staged || '').split('\n').filter(line => line.trim().length > 0)
-  const removed = diff.staged ? diff.staged.split('\n').filter(line => line.trim().length > 0) : []
-
-  if (!status || !status.initialized) return <div className="git-view git-view--empty">
-    <div className="git-empty-state">
-      <span className="git-empty-icon"><GitBranch size={20} /></span>
-      <h2>Локальный Git ещё не создан</h2>
-      <p>Инициализируйте репозиторий в папке проекта «{project.name}». Коммиты локальные, push не выполняется автоматически.</p>
-      <button className="button-primary" onClick={onInitialize}>Инициализировать Git</button>
-    </div>
-  </div>
+  }, [project.id, selected, status?.initialized, changes])
 
   const commit = () => {
     const message = commitMessage.trim()
     if (!message || !stagedCount) return
+    if (!window.confirm(`Создать локальный коммит «${message}» с ${stagedCount} файлом(ами)? Это действие не отправляет изменения на GitHub.`)) return
     onCommit(message)
     setCommitMessage('')
   }
 
+  if (!status) return <div className="git-view"><div className="git-empty-state"><RefreshCw className="spin" size={20} /><strong>Загружаем Git…</strong></div></div>
+  if (!status.initialized) return <div className="git-view"><div className="git-empty-state"><span className="git-empty-icon"><GitBranch size={22} /></span><strong>В проекте пока нет Git-репозитория</strong><span>Создайте локальный репозиторий, чтобы просматривать diff и фиксировать изменения.</span><button className="button-primary" onClick={onInitialize}><GitBranch size={14} /> Инициализировать Git</button><small>Работает только внутри папки этого проекта. На удалённый сервер ничего не отправляется.</small></div></div>
+
+  const diffLines = diff.replace(/\n$/, '').split('\n')
   return <div className="git-view">
     <div className="git-sidebar">
-      <div className="git-head"><span>SOURCE CONTROL</span><button className="icon-button tiny" title="Обновить" onClick={onRefresh}><RefreshCw size={13} /></button></div>
-      <div className="git-branch-card"><span className="git-branch-icon"><GitBranch size={15} /></span><span><strong>{status.branch}</strong><small>локальная ветка проекта</small></span><ChevronDown size={13} /></div>
-      <div className="changes-head"><button><ChevronDown size={13} /><span>Изменения</span><span className="git-count">{changes.length}</span></button><button className="icon-button tiny" title="Stage all" onClick={() => changes.filter(change => !change.staged).forEach(change => onToggleStaged(change.path))}><Plus size={13} /></button></div>
-      <div className="change-list">{changes.map(change => <div className={'change-file' + (selected === change.path ? ' is-selected' : '')} key={change.path}>
-        <button className={'stage-box' + (change.staged ? ' is-checked' : '')} onClick={() => onToggleStaged(change.path)} aria-label={change.staged ? 'Убрать из stage' : 'Добавить в stage'}>{change.staged && <Check size={11} />}</button>
-        <button className="change-file-name" onClick={() => setSelected(change.path)}><FileCode2 size={14} /><span>{labelOf(change.path)}</span></button>
-        <span className={'change-kind change-kind--' + change.kind.toLowerCase()}>{change.kind}</span>
-        <button className="icon-button tiny change-more" aria-label="Открыть файл" onClick={() => onOpenFile(change.path)}><MoreHorizontal size={13} /></button>
-      </div>)}</div>
-      {!changes.length && <p className="git-no-changes">Нет изменений в рабочей папке.</p>}
-      <div className="staged-head"><button><ChevronDown size={13} /><span>В индексе</span><span className="git-count">{stagedCount}</span></button></div>
+      <div className="git-head"><span>SOURCE CONTROL</span><button className="icon-button tiny" title="Обновить состояние" onClick={onRefresh}><RefreshCw size={13} /></button></div>
+      <div className="git-branch-card"><span className="git-branch-icon"><GitBranch size={15} /></span><span><strong>{status.branch || 'main'}</strong><small>локальная ветка</small></span></div>
+      <div className="changes-head"><div><ChevronDown size={13} /><span>Изменения</span><span className="git-count">{changes.length}</span></div></div>
+      <div className="change-list">{changes.map(file => <div className={`change-file${selected === file.path ? ' is-selected' : ''}`} key={file.path}>
+        <button className={`stage-box${file.staged ? ' is-checked' : ''}`} onClick={() => onToggleStaged(file.path)} aria-label={file.staged ? 'Убрать из stage' : 'Добавить в stage'}>{file.staged && <Check size={11} />}</button>
+        <button className="change-file-name" onClick={() => setSelected(file.path)}><TerminalSquare size={14} /><span>{file.path}</span></button>
+        <span className={`change-kind change-kind--${file.kind.toLowerCase()}`}>{file.kind}</span>
+      </div>)}{changes.length === 0 && <div className="git-no-changes"><Check size={14} /> Рабочая папка чистая</div>}</div>
+      <div className="staged-head"><div><ChevronDown size={13} /><span>В индексе</span><span className="git-count">{stagedCount}</span></div></div>
       <div className="git-spacer" />
-      <div className="git-commit-box">
-        <label htmlFor="commit-message">Сообщение коммита</label>
-        <textarea id="commit-message" rows={2} value={commitMessage} onChange={event => setCommitMessage(event.target.value)} placeholder="Например: подключить Claude Code CLI" />
-        <button disabled={!stagedCount || !commitMessage.trim()} onClick={commit}><GitCommitHorizontal size={15} />Зафиксировать изменения<span>\u21B5</span></button>
-        <small>{stagedCount ? stagedCount + ' файл(ов) в индексе' : 'Выберите файлы для коммита'}</small>
-      </div>
+      <div className="git-commit-box"><label htmlFor="commit-message">Сообщение коммита</label><textarea id="commit-message" rows={2} maxLength={256} value={commitMessage} onChange={event => setCommitMessage(event.target.value)} placeholder="Что изменилось?"/><button disabled={!stagedCount || !commitMessage.trim()} onClick={commit}><GitCommitHorizontal size={15} />Создать локальный коммит<span>↵</span></button><small>{stagedCount ? `${stagedCount} staged` : 'Сначала добавьте файлы в индекс'}</small></div>
     </div>
     <div className="diff-panel">
-      <div className="diff-toolbar">
-        <div className="diff-file-title"><FileDiff size={15} /><strong>{selected ? labelOf(selected) : 'Нет файла'}</strong>{current && <span className={'change-kind change-kind--' + current.kind.toLowerCase()}>{current.kind}</span>}</div>
-        <div className="diff-actions">
-          <button className="diff-option" onClick={onRefresh}><span>Обновить статус</span><ChevronDown size={12} /></button>
-          <button className="icon-button" title="Открыть в редакторе" onClick={() => selected && onOpenFile(selected)}><ArrowUpRight size={15} /></button>
-        </div>
-      </div>
-      <div className="diff-subheader"><span>{selected || 'изменения не выбраны'}</span><span><span className="diff-add">+{added.length}</span> <span className="diff-remove">-{removed.length}</span></span></div>
-      <div className="diff-code">
-        <div className="diff-hunk">@@ {selected || 'git diff'} @@</div>
-        {added.map((line, index) => <div className="diff-line diff-line--added" key={'line-' + index}><span className="diff-line-number">{index + 1}</span><span className="diff-sign">+</span><code>{line}</code></div>)}
-        {!added.length && <div className="diff-line diff-line--unchanged"><span className="diff-line-number">1</span><span className="diff-sign"> </span><code>Нет изменений для показа. Измените файл или выберите другой.</code></div>}
-      </div>
-      <div className="diff-footer">
-        <span><GitPullRequest size={13} /> Просмотр только локальных изменений</span>
-        <button onClick={() => selected && onToggleStaged(selected)}><Check size={13} />{current && current.staged ? 'В индексе' : 'Добавить в индекс'}</button>
-      </div>
+      <div className="diff-toolbar"><div className="diff-file-title"><GitPullRequest size={15} /><strong>{selected || 'Diff'}</strong>{selected && <span className={`change-kind change-kind--${(changes.find(file => file.path === selected)?.kind ?? 'M').toLowerCase()}`}>{changes.find(file => file.path === selected)?.kind ?? 'M'}</span>}</div><div className="diff-actions"><button className="icon-button" title="Открыть файл" disabled={!selected} onClick={() => selected && onOpenFile(selected)}><RotateCcw size={14} /></button></div></div>
+      <div className="diff-subheader"><span>{selected || 'Изменения появятся здесь'}</span><span>{diffLoading ? 'Загружаем…' : status.initialized ? status.branch : ''}</span></div>
+      {error && <div className="file-error" role="alert">{error}</div>}
+      <div className="diff-code">{diffLoading ? <div className="git-no-changes">Загружаем diff…</div> : diffLines.filter((line, index) => line || index < diffLines.length - 1).map((line, index) => {
+        const added = line.startsWith('+') && !line.startsWith('+++')
+        const removed = line.startsWith('-') && !line.startsWith('---')
+        const hunk = line.startsWith('@@')
+        return <div className={`diff-line${added ? ' diff-line--added' : removed ? ' diff-line--removed' : hunk ? ' diff-line--hunk' : ''}`} key={`${index}-${line}`}><span className="diff-line-number">{index + 1}</span><span className="diff-sign">{added ? '+' : removed ? '−' : ' '}</span><code>{line}</code></div>
+      })}{!diffLoading && !diff && <div className="git-no-changes">{changes.length ? 'Для этого файла нет текстового diff.' : 'Нет локальных изменений.'}</div>}</div>
+      <div className="diff-footer"><span><GitPullRequest size={13} /> Локальный репозиторий · без push</span>{selected && <button onClick={() => onToggleStaged(selected)}><Check size={13} />{changes.find(file => file.path === selected)?.staged ? 'Убрать из индекса' : 'Добавить в индекс'}</button>}</div>
     </div>
   </div>
 }

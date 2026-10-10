@@ -1,0 +1,69 @@
+name: polar-workspace
+
+services:
+  polar-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: polar-workspace:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      API_PORT: "3000"
+      WEB_ROOT: /app/dist
+      DATA_DIR: /data
+      DB_PATH: /data/claude-workspace.sqlite
+      WORKSPACES_DIR: /workspaces
+      CLAUDE_CONFIG_DIR: /claude-config/.claude
+      CLAUDE_HOME: /claude-config/home
+      CLAUDE_BIN: /app/node_modules/.bin/claude
+      DISABLE_AUTOUPDATER: "1"
+      PATH: /app/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-1}
+      CLAUDE_ENABLED: ${CLAUDE_ENABLED:-1}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
+    volumes:
+      - polar_data:/data
+      - polar_workspaces:/workspaces
+      - polar_claude_config:/claude-config
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/_app/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      polar-app:
+        condition: service_healthy
+    environment:
+      POLAR_DOMAIN: ${POLAR_DOMAIN:?Set POLAR_DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - polar_caddy_data:/data
+      - polar_caddy_config:/config
+
+volumes:
+  polar_data:
+  polar_workspaces:
+  polar_claude_config:
+  polar_caddy_data:
+  polar_caddy_config:

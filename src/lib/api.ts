@@ -1,4 +1,4 @@
-import type { ChatMessage, Project, ProjectFile, Session } from '../types'
+import type { AttachmentInfo, ChatMessage, Project, ProjectFile, Session } from '../types'
 
 export interface AuthStatus { initialized: boolean; authenticated: boolean; username?: string; csrfToken?: string }
 export interface SessionRecord { id: string; title: string; model: string; status: string; archived: boolean; createdAt: number; updatedAt: number }
@@ -9,7 +9,7 @@ export interface GitStatus { initialized: boolean; branch: string; changes: GitC
 export interface GitDiff { staged: string; unstaged: string }
 export interface CliStatus { enabled: boolean; installed: boolean; version: string | null; loginFilePresent: boolean; webSearchAvailable: boolean }
 export interface MessageSearchResult { id: string; role: 'user' | 'assistant'; snippet: string; createdAt: number; projectId: string; projectName: string; sessionId: string; sessionTitle: string }
-export type ChatStreamEvent = { type: 'started'; userMessageId: string; sessionId: string; cliSessionId: string; model: string }
+export type ChatStreamEvent = { type: 'started'; userMessageId: string; sessionId: string; cliSessionId: string; model: string; attachments?: AttachmentInfo[] }
   | { type: 'delta'; text: string }
   | { type: 'activity'; tool: string }
   | { type: 'done'; sessionId: string; cliSessionId: string; inputTokens: number; outputTokens: number }
@@ -56,7 +56,7 @@ function parseSseBlock(block: string): { event: string; data: unknown } | undefi
 }
 
 async function streamMessage(
-  input: { projectId: string; sessionId: string; content: string; model: 'sonnet' | 'opus' | 'haiku'; webSearch: boolean; contextFiles: string[] },
+  input: { projectId: string; sessionId: string; content: string; model: 'sonnet' | 'opus' | 'haiku'; webSearch: boolean; contextFiles: string[]; attachmentIds: string[] },
   onEvent: (event: ChatStreamEvent) => void,
   onError: (error: Error) => void,
 ): Promise<AbortController> {
@@ -122,6 +122,16 @@ export const api = {
     return (await requestJson<{ results: MessageSearchResult[] }>(`/api/claude/search?q=${encodeURIComponent(query)}`)).results
   },
   streamMessage,
+  async uploadAttachment(projectId: string, sessionId: string, file: File) {
+    const headers = new Headers({ 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name), 'x-file-type': file.type })
+    addCsrf(headers, 'POST')
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/attachments`, { method: 'POST', headers, credentials: 'include', body: file })
+    const payload = await response.json().catch(() => ({})) as { attachment?: AttachmentInfo; error?: string; message?: string }
+    if (!response.ok || !payload.attachment) throw new ApiError(response.status, payload.error ?? 'upload_failed', payload.message ?? 'Не удалось загрузить вложение.')
+    return payload.attachment
+  },
+  deleteAttachment: (projectId: string, sessionId: string, attachmentId: string) => requestJson<void>(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' }),
+  attachmentDownloadUrl: (projectId: string, attachmentId: string) => `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}/download`,
   async listTerminals(projectId: string) {
     return (await requestJson<{ sessions: { id: string; projectId: string; createdAt: number }[] }>(`/api/terminal/sessions?projectId=${encodeURIComponent(projectId)}`)).sessions
   },
@@ -165,14 +175,20 @@ export const api = {
   gitCommit: (projectId: string, message: string) => requestJson<{ hash: string; message: string }>(`/api/projects/${encodeURIComponent(projectId)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
   async messages(projectId: string, sessionId: string) {
     const result = await requestJson<{ messages: { id: string; role: string; content: unknown; createdAt: number }[] }>(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/messages`)
-    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
+    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), attachments: attachmentMetadata(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
   },
 }
 
 function textContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (Array.isArray(content)) return content.map(block => block && typeof block === 'object' && 'text' in block && typeof block.text === 'string' ? block.text : '').filter(Boolean).join('\n\n')
+  if (content && typeof content === 'object' && 'text' in content && typeof content.text === 'string') return content.text
   return ''
+}
+
+function attachmentMetadata(content: unknown): AttachmentInfo[] {
+  if (!content || typeof content !== 'object' || !('attachments' in content) || !Array.isArray(content.attachments)) return []
+  return content.attachments.filter((item): item is AttachmentInfo => Boolean(item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && 'name' in item && typeof item.name === 'string' && 'mimeType' in item && typeof item.mimeType === 'string' && 'byteSize' in item && typeof item.byteSize === 'number'))
 }
 
 function relativeTime(timestamp: number): string {

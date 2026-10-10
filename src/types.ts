@@ -28,6 +28,15 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   time: string
+  attachments?: AttachmentInfo[]
+}
+
+export interface AttachmentInfo {
+  id: string
+  name: string
+  mimeType: string
+  byteSize: number
+  createdAt?: number
 }
 
 export interface ProjectFile {

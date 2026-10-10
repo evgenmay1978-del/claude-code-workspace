@@ -1,0 +1,13 @@
+.git
+node_modules
+dist
+dist-server
+.data
+workspaces
+backups
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -1,57 +1,49 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
-import { ArrowRight, Loader2, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck, TerminalSquare, X } from 'lucide-react'
 import { api } from '../lib/api'
 
-export function AuthGate({ initialized, onSuccess }: { initialized: boolean; onSuccess: () => void }) {
-  const [username, setUsername] = useState('')
+export function AuthGate({ initialized, onSuccess }: { initialized: boolean; onSuccess: (username: string) => void }) {
+  const [username, setUsername] = useState('owner')
   const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (busy) return
-    const name = username.trim()
-    if (name.length < 3) { setError('Логин не короче 3 символов.'); return }
-    if (password.length < 8) { setError('Пароль не короче 8 символов.'); return }
-    if (!initialized && password !== confirm) { setError('Пароли не совпадают.'); return }
-    setBusy(true)
     setError('')
+    if (!initialized && password !== confirmPassword) { setError('Пароли не совпадают.'); return }
+    setBusy(true)
     try {
-      if (initialized) await api.login(name, password)
-      else await api.setup(name, password)
-      onSuccess()
+      const result = initialized ? await api.login(username, password) : await api.setup(username, password)
+      onSuccess(result.username)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось войти.')
-    } finally {
-      setBusy(false)
-    }
+      setError(cause instanceof Error ? cause.message : 'Не удалось войти. Повторите попытку.')
+    } finally { setBusy(false) }
   }
 
   return <main className="auth-stage">
-    <form className="auth-card" onSubmit={submit}>
-      <span className="brand-mark"><span /><span /><i /></span>
-      <span className="modal-kicker">POLAR WORKSPACE</span>
-      <h1>{initialized ? 'Вход владельца.' : 'Первичная настройка.'}</h1>
-      <p>{initialized
-        ? 'Один владелец и одна защищённая сессия. Чаты, файлы и Claude Code CLI живут на вашем сервере.'
-        : 'Создайте единственного владельца рабочего пространства. Пароль сохраняется только как scrypt-хэш, в открытом виде — нигде.'}</p>
-      {error && <div className="auth-error" role="alert">{error}</div>}
-      <label htmlFor="auth-username">Логин</label>
-      <input id="auth-username" autoFocus autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} placeholder="owner" maxLength={64} />
-      <label htmlFor="auth-password">Пароль</label>
-      <input id="auth-password" type="password" autoComplete={initialized ? 'current-password' : 'new-password'} value={password} onChange={event => setPassword(event.target.value)} placeholder="Минимум 8 символов" />
-      {!initialized && <>
-        <label htmlFor="auth-confirm">Повторите пароль</label>
-        <input id="auth-confirm" type="password" autoComplete="new-password" value={confirm} onChange={event => setConfirm(event.target.value)} placeholder="Ещё раз" />
-      </>}
-      <button className="button-primary" type="submit" disabled={busy}>
-        {busy ? <Loader2 size={15} className="spin" /> : <ArrowRight size={15} />}
-        {initialized ? 'Войти' : 'Создать владельца'}
-      </button>
-      <small className="auth-note"><ShieldCheck size={12} /> Данные не покидают ваш сервер: приложение работает только с локальным Claude Code CLI.</small>
-    </form>
+    <div className="auth-atmosphere" aria-hidden="true"><i /><i /><i /></div>
+    <section className="auth-card" aria-labelledby="auth-title">
+      <div className="auth-brand"><span className="auth-brand-mark"><span className="brand-mark"><span /><span /><i /></span></span><span><strong>POLAR WORKSPACE</strong><small>WEB · CLAUDE CODE CLI</small></span><span className="auth-version">PRIVATE</span></div>
+      <div className="auth-emblem"><div className="auth-emblem-ring" /><span className="brand-mark"><span /><span /><i /></span></div>
+      <span className="auth-eyebrow">{initialized ? 'ЗАЩИЩЁННОЕ ПРОСТРАНСТВО' : 'ПЕРВЫЙ ЗАПУСК'}</span>
+      <h1 id="auth-title">{initialized ? <>Продолжим<br /><em>с вашего проекта.</em></> : <>Ваш код.<br /><em>Ваше окружение.</em></>}</h1>
+      <p className="auth-lead">{initialized ? 'Войдите в личное рабочее пространство Polar.' : 'Создайте единственный аккаунт владельца. Регистрация других пользователей закрыта.'}</p>
+      <form className="auth-form" onSubmit={submit}>
+        <label htmlFor="owner-name">Имя владельца</label>
+        <input id="owner-name" value={username} onChange={event => setUsername(event.target.value)} autoComplete="username" maxLength={32} required />
+        <label htmlFor="owner-password">Пароль</label>
+        <div className="auth-password-wrap"><input id="owner-password" type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} autoComplete={initialized ? 'current-password' : 'new-password'} minLength={initialized ? 1 : 12} maxLength={256} required /><button type="button" aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'} onClick={() => setShowPassword(value => !value)}>{showPassword ? <EyeOff size={15} /> : <Eye size={15} />}</button></div>
+        {!initialized && <><label htmlFor="owner-confirm">Повторите пароль</label><div className="auth-password-wrap"><input id="owner-confirm" type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} autoComplete="new-password" minLength={12} maxLength={256} required /><LockKeyhole size={14} /></div><small className="auth-field-note">Не короче 12 символов. Запишите пароль: восстановление здесь не включено.</small></>}
+        {error && <div className="auth-error" role="alert"><X size={14} />{error}</div>}
+        <button type="submit" className="auth-submit" disabled={busy || (!initialized && password.length < 12)}>{busy ? 'Подготавливаем workspace…' : initialized ? 'Войти в workspace' : 'Создать workspace'}<ArrowRight size={16} /></button>
+      </form>
+      <div className="auth-divider" />
+      <div className="auth-security"><span><ShieldCheck size={15} /></span><p><strong>Ваш вход обрабатывает Claude Code CLI</strong><small>Подписку подключите через официальный CLI на своём сервере. Polar не принимает OAuth-токены и API-ключи.</small></p></div>
+      <div className="auth-footer"><span><TerminalSquare size={12} /> Локальный владелец · закрытая регистрация</span><a href="https://docs.anthropic.com/en/docs/claude-code/authentication" target="_blank" rel="noreferrer">Как войти в Claude Code</a></div>
+    </section>
+    <div className="auth-footer-note">POLAR WORKSPACE <span>·</span> ПРИВАТНАЯ WEB-СРЕДА</div>
   </main>
 }
