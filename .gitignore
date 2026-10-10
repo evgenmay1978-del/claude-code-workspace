@@ -5,7 +5,7 @@ dist/
 .env.*
 .data/
 dist-server/
-workspaces/
+/workspaces/
 backups/
 *.sqlite
 *.sqlite-shm

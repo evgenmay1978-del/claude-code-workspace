@@ -2,6 +2,12 @@
 
 A private, single-owner web workspace for Claude Code. It combines project conversations, local chat history, project files, Git status/diff/staging/commit, private attachments, and a real PTY terminal in a responsive desktop/mobile PWA.
 
+> **Коротко по-русски.** Приватное self-hosted веб-приложение «Polar Workspace»: чаты, проекты,
+> файлы, Git и настоящий терминал в браузере. Все запросы уходят в **официальный Claude Code CLI**
+> по подписке — без API-ключей, SDK и посредников. Ставится на свой Linux-VPS через Docker Compose
+> и Caddy: `./scripts/setup.sh` → откройте `https://ваш-домен` → создайте владельца → в проекте
+> откройте **Терминал** и выполните `claude`, чтобы пройти официальный вход. Подробности ниже.
+
 > **Not an Anthropic product.** This project launches the unmodified official Claude Code CLI. It does not use the Anthropic Messages API, an Anthropic SDK, an API key, or a proxy. It is designed for the server owner’s personal workspace only. Do not expose it as a multi-user service or route your subscription credentials/usage for other people. Review Anthropic’s current [Claude Code Legal & Compliance](https://docs.anthropic.com/en/docs/claude-code/legal-and-compliance) and plan terms before use.
 
 The application has its own local history and project data. It does **not** sync with Claude.ai chats, account settings, plan usage, or limits. Requests run only after the owner sends them and consume whatever limits apply to the owner’s official Claude Code login.
