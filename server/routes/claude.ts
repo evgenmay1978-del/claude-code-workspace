@@ -22,6 +22,11 @@ const chatRequest = z.object({
 type ProjectRow = { id: string; name: string; instructions: string; workspace_path: string }
 type SessionRow = { id: string; project_id: string; title: string; model: string; agent_session_id: string | null; status: string }
 
+const numberFromEnv = (name: string, fallback: number, min: number): number => {
+  const value = Number(process.env[name])
+  return Number.isFinite(value) && value >= min ? Math.floor(value) : fallback
+}
+
 function sendEvent(res: Response, event: string, data: unknown) {
   if (res.writableEnded) return
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -34,6 +39,8 @@ function titleFromPrompt(prompt: string): string {
 
 export function createClaudeRouter(db: AppDatabase): Router {
   const router = Router()
+  // Активные стримы: id сессий, по которым прямо сейчас идёт ответ CLI.
+  const activeStreams = new Set<string>()
 
   router.get('/status', (_req, res) => {
     const status = getCliStatus()
@@ -79,6 +86,8 @@ export function createClaudeRouter(db: AppDatabase): Router {
     if (!project) return res.status(404).json({ error: 'project_not_found', message: 'Проект не найден.' })
     const session = db.prepare('SELECT id,project_id,title,model,agent_session_id,status FROM conversations WHERE id=? AND project_id=? AND archived_at IS NULL').get(input.sessionId, project.id) as SessionRow | undefined
     if (!session) return res.status(404).json({ error: 'session_not_found', message: 'Чат не найден или архивирован.' })
+    if (activeStreams.has(session.id)) return res.status(409).json({ error: 'stream_in_progress', message: 'В этой сессии уже идёт ответ. Дождитесь завершения или остановите его.' })
+    if (activeStreams.size >= numberFromEnv('MAX_CONCURRENT_STREAMS', 3, 1)) return res.status(429).json({ error: 'too_many_streams', message: 'Слишком много одновременных запросов к Claude Code. Дождитесь завершения текущих.' })
     const availableFiles = new Set(listWorkspaceFiles(project.workspace_path).filter(file => file.kind === 'file').map(file => file.path))
     if (input.contextFiles.some(path => !availableFiles.has(path))) return res.status(400).json({ error: 'invalid_context_file', message: 'Один из выбранных файлов больше не доступен в папке проекта.' })
     const attachmentRows = input.attachmentIds.length
@@ -121,6 +130,25 @@ export function createClaudeRouter(db: AppDatabase): Router {
       return res.end()
     }
 
+    // Heartbeat держит SSE через прокси, таймаут не даёт зависшему CLI висеть вечно.
+    const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': keepalive\n\n') }, numberFromEnv('CLAUDE_STREAM_HEARTBEAT_MS', 25_000, 250))
+    heartbeat.unref()
+    let timedOut = false
+    // Если CLI не умирает по SIGTERM (или его дети держат пайпы), добиваем SIGKILL и закрываем потоки.
+    const stopChild = () => {
+      child.kill('SIGTERM')
+      const killTimer = setTimeout(() => { child.kill('SIGKILL'); child.stdout.destroy(); child.stderr.destroy() }, 2500)
+      killTimer.unref()
+    }
+    const streamTimer = setTimeout(() => {
+      timedOut = true
+      sendEvent(res, 'error', { code: 'cli_timeout', message: 'Claude Code не ответил за отведённое время; процесс остановлен.' })
+      stopChild()
+    }, numberFromEnv('CLAUDE_STREAM_TIMEOUT_MS', 30 * 60 * 1000, 500))
+    streamTimer.unref()
+    const releaseStream = () => { clearInterval(heartbeat); clearTimeout(streamTimer); activeStreams.delete(session.id) }
+    activeStreams.add(session.id)
+
     let buffer = ''
     let assistantText = ''
     let stderr = ''
@@ -133,14 +161,16 @@ export function createClaudeRouter(db: AppDatabase): Router {
     const saveAssistant = (exitCode: number | null) => {
       if (finished) return
       finished = true
+      releaseStream()
       const endedAt = Date.now()
       if (assistantText.trim()) {
         db.prepare('INSERT INTO messages(id,conversation_id,role,content_json,model,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(), session.id, 'assistant', JSON.stringify([{ type: 'text', text: assistantText }]), input.model, inputTokens, outputTokens, endedAt)
       }
       if (inputTokens > 0 || outputTokens > 0) db.prepare('INSERT INTO usage_events(id,conversation_id,model,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?)').run(randomUUID(), session.id, input.model, inputTokens, outputTokens, endedAt)
-      const succeeded = exitCode === 0 && !disconnected
+      const succeeded = exitCode === 0 && !disconnected && !timedOut
       db.prepare('UPDATE conversations SET status=?, agent_session_id=?, updated_at=? WHERE id=?').run(succeeded ? 'done' : disconnected ? 'idle' : 'error', actualSessionId, endedAt, session.id)
       if (disconnected) return
+      if (timedOut) { if (!res.writableEnded) res.end(); return }
       if (succeeded) sendEvent(res, 'done', { sessionId: session.id, cliSessionId: actualSessionId, inputTokens, outputTokens })
       else sendEvent(res, 'error', { code: 'cli_run_failed', message: stderr.trim().slice(-1200) || 'Claude Code завершил запрос с ошибкой.' })
       res.end()
@@ -189,20 +219,27 @@ export function createClaudeRouter(db: AppDatabase): Router {
     })
     child.stderr.on('data', (chunk: string) => { if (stderr.length < 8000) stderr += chunk.slice(0, 8000 - stderr.length) })
     child.on('error', () => {
+      releaseStream()
       db.prepare('UPDATE conversations SET status=?, updated_at=? WHERE id=?').run('error', Date.now(), session.id)
       if (!res.writableEnded) { sendEvent(res, 'error', { code: 'cli_spawn_error', message: 'Не удалось запустить локальный Claude Code CLI.' }); res.end() }
       finished = true
     })
+    // 'close' может не наступить, если пайпы держат внуки CLI: страхуемся по 'exit' с короткой паузой на дозапись вывода.
+    let exitTimer: NodeJS.Timeout | null = null
+    child.on('exit', (code: number | null) => {
+      if (exitTimer) clearTimeout(exitTimer)
+      exitTimer = setTimeout(() => { if (buffer.trim()) processLine(buffer); saveAssistant(code) }, 400)
+      exitTimer.unref()
+    })
     child.on('close', (code: number | null) => {
+      if (exitTimer) clearTimeout(exitTimer)
       if (buffer.trim()) processLine(buffer)
       saveAssistant(code)
     })
     res.on('close', () => {
       if (!finished) {
         disconnected = true
-        child.kill('SIGTERM')
-        const timeout = setTimeout(() => child.kill('SIGKILL'), 2500)
-        timeout.unref()
+        stopChild()
       }
     })
   })

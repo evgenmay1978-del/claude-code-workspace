@@ -16,7 +16,9 @@ RUN pnpm install --prod --frozen-lockfile
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git bash ripgrep libstdc++6 libgcc-s1 tar \
+  && apt-get install -y --no-install-recommends ca-certificates git bash ripgrep libstdc++6 libgcc-s1 tar tzdata locales \
+  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+  && locale-gen \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 10001 polar \
   && useradd --uid 10001 --gid polar --create-home --home-dir /home/polar --shell /bin/bash polar \

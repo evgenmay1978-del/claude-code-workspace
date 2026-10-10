@@ -17,7 +17,7 @@ export function createApp(database: AppDatabase, terminalManager = new TerminalM
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
-    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=())')
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
     next()
   })
   app.use(express.json({ limit: '8mb' }))

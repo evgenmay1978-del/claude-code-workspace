@@ -79,6 +79,8 @@ docker compose up -d --build
 
 The named data volumes survive rebuilds and container replacement. Do not run `docker compose down -v` unless you intend to delete all application data and CLI configuration.
 
+Run this at least once a month: `DISABLE_AUTOUPDATER=1` keeps the bundled Claude Code CLI pinned, and Anthropic periodically raises the minimum supported CLI version — a stale binary starts failing with an unclear error. After updating, check the in-app Terminal: `claude --version`.
+
 ## Mobile / PWA installation
 
 Open the HTTPS address on the phone after signing in:
@@ -119,6 +121,8 @@ The restore script validates the archive layout, stops the app, and requires you
 
 - Change domain and origin in `.env` together: `POLAR_DOMAIN` and `PUBLIC_ORIGIN` must match the public HTTPS origin. Keep `SESSION_COOKIE_SECURE=1` for HTTPS.
 - `CLAUDE_ENABLED=1` enables the CLI-backed chat route. No `ANTHROPIC_API_KEY` is needed or passed to the CLI child process.
+- `TZ` (default `America/Los_Angeles`) plus `LANG`/`LC_ALL` (`en_US.UTF-8`) set the container locale so the CLI timestamps match the owner's time zone.
+- `CLAUDE_STREAM_TIMEOUT_MS` (default 30 minutes) cancels a hung CLI run, `MAX_CONCURRENT_STREAMS` (default 3) caps parallel runs, `CLAUDE_STREAM_HEARTBEAT_MS` (default 25 s) keeps SSE alive through proxies. A second parallel run for the same chat is rejected with `409 stream_in_progress`.
 - Health check: `GET /_app/health` (intentionally unauthenticated for container readiness).
 - Application logs: `docker compose logs -f polar-app`; proxy/TLS logs: `docker compose logs -f caddy`.
 - Restart services after changing `.env`: `docker compose up -d`.

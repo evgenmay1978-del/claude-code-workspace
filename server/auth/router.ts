@@ -6,6 +6,7 @@ import { z } from 'zod'
 import type { AppDatabase } from '../db.js'
 
 const COOKIE_NAME = 'polar_session'
+const SECURE_COOKIE_NAME = '__Host-polar_session'
 const SESSION_MS = 7 * 24 * 60 * 60 * 1000
 const passphraseSchema = z.string().min(12).max(256)
 const setupSchema = z.object({ username: z.string().trim().min(3).max(32).regex(/^[\p{L}0-9_.-]+$/u), password: passphraseSchema }).strict()
@@ -30,12 +31,18 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+function cookieName(): string {
+  // __Host- требует Secure + Path=/ и запрещает Domain; при http-разработке (SESSION_COOKIE_SECURE=0) браузер такую cookie отклонит.
+  return process.env.SESSION_COOKIE_SECURE !== '0' ? SECURE_COOKIE_NAME : COOKIE_NAME
+}
+
 function readCookie(header: string | undefined): string | undefined {
   if (!header) return undefined
   for (const item of header.split(';')) {
     const separator = item.indexOf('=')
     if (separator < 0) continue
-    if (item.slice(0, separator).trim() !== COOKIE_NAME) continue
+    const name = item.slice(0, separator).trim()
+    if (name !== COOKIE_NAME && name !== SECURE_COOKIE_NAME) continue
     try { return decodeURIComponent(item.slice(separator + 1).trim()) } catch { return undefined }
   }
   return undefined
@@ -45,14 +52,14 @@ function writeCookie(res: Parameters<RequestHandler>[1], token: string, maxAgeMs
   const secure = process.env.SESSION_COOKIE_SECURE !== '0'
   const sameSite = secure ? 'None' : 'Lax'
   const maxAgeSeconds = Math.max(0, Math.floor(maxAgeMs / 1000))
-  const attributes = [`${COOKIE_NAME}=${encodeURIComponent(token)}`, 'Path=/', 'HttpOnly', `SameSite=${sameSite}`, `Max-Age=${maxAgeSeconds}`]
+  const attributes = [`${cookieName()}=${encodeURIComponent(token)}`, 'Path=/', 'HttpOnly', `SameSite=${sameSite}`, `Max-Age=${maxAgeSeconds}`]
   if (secure) attributes.push('Secure')
   res.setHeader('Set-Cookie', attributes.join('; '))
 }
 
 function clearCookie(res: Parameters<RequestHandler>[1]): void {
   const secure = process.env.SESSION_COOKIE_SECURE !== '0'
-  const attributes = [`${COOKIE_NAME}=`, 'Path=/', 'HttpOnly', `SameSite=${secure ? 'None' : 'Lax'}`, 'Max-Age=0']
+  const attributes = [`${cookieName()}=`, 'Path=/', 'HttpOnly', `SameSite=${secure ? 'None' : 'Lax'}`, 'Max-Age=0']
   if (secure) attributes.push('Secure')
   res.setHeader('Set-Cookie', attributes.join('; '))
 }
