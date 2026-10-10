@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Activity, ChevronDown, ChevronRight, FolderKanban, GitBranch, MessageSquare, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, TerminalSquare } from 'lucide-react'
 import type { Project, Session } from '../types'
+import type { CliStatus, MessageSearchResult } from '../lib/api'
 
 interface Props {
   projects: Project[]
@@ -14,13 +15,19 @@ interface Props {
   onCreateProject: () => void
   onNewSession: () => void
   onRenameSession: (session: Session) => void
+  searchResults: MessageSearchResult[]
+  searching: boolean
+  onOpenSearchResult: (result: MessageSearchResult) => void
   onSettings: () => void
+  username: string
+  cliStatus: CliStatus | null
 }
 
-export function Sidebar({ projects, activeProject, activeSession, search, onSearch, onSelectProject, onSelectSession, onCreateProject, onNewSession, onRenameSession, onSettings }: Props) {
+export function Sidebar({ projects, activeProject, activeSession, search, onSearch, onSelectProject, onSelectSession, onCreateProject, onNewSession, onRenameSession, searchResults, searching, onOpenSearchResult, onSettings, username, cliStatus }: Props) {
   const [projectsOpen, setProjectsOpen] = useState(true)
   const [sessionsOpen, setSessionsOpen] = useState(true)
-  const filteredProjects = projects.filter(project => project.name.toLowerCase().includes(search.toLowerCase()))
+  const query = search.trim().toLowerCase()
+  const filteredProjects = projects.filter(project => project.name.toLowerCase().includes(query) || project.sessions.some(session => session.title.toLowerCase().includes(query)))
   return <div className="sidebar-content">
     <div className="workspace-switcher">
       <div className="workspace-avatar"><span className="brand-mark"><span /><span /><i /></span></div>
@@ -28,7 +35,7 @@ export function Sidebar({ projects, activeProject, activeSession, search, onSear
       <button className="icon-button tiny" aria-label="Выбрать workspace"><ChevronDown size={15} /></button>
     </div>
 
-    <div className="sidebar-search"><Search size={14} /><input id="project-search" value={search} onChange={event => onSearch(event.target.value)} placeholder="Найти проект" /><kbd>⌘ K</kbd></div>
+    <div className="sidebar-search"><Search size={14} /><input id="project-search" value={search} onChange={event => onSearch(event.target.value)} placeholder="Найти проект или чат" /><kbd>⌘ K</kbd></div>
 
     <div className="sidebar-section-head"><button className="section-toggle" onClick={() => setProjectsOpen(!projectsOpen)}>{projectsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>Проекты</span><span className="section-count">{projects.length}</span></button><button className="icon-button tiny" aria-label="Создать проект" onClick={onCreateProject}><Plus size={15} /></button></div>
     {projectsOpen && <div className="project-list">{filteredProjects.map(project => <button key={project.id} className={`project-row${project.id === activeProject.id ? ' is-active' : ''}`} onClick={() => onSelectProject(project)}>
@@ -36,6 +43,8 @@ export function Sidebar({ projects, activeProject, activeSession, search, onSear
       <span className="project-name">{project.name}</span><span className={`project-state state-${project.status}`} title={project.status} />
       {project.id === activeProject.id && <span className="project-branch-mini"><GitBranch size={11} />{project.branch}</span>}
     </button>)}{filteredProjects.length === 0 && <div className="empty-filter">Нет проектов по запросу</div>}</div>}
+
+    {search.trim().length >= 2 && <div className="global-search-results"><div className="global-search-heading"><span>СОВПАДЕНИЯ В ЧАТАХ</span><span>{searching ? '…' : searchResults.length}</span></div>{searching ? <div className="global-search-empty">Ищем в личной истории…</div> : searchResults.map(result => <button key={result.id} className="global-search-result" onClick={() => onOpenSearchResult(result)}><span className="search-result-icon"><MessageSquare size={13} /></span><span className="search-result-copy"><strong>{result.sessionTitle}</strong><small>{result.projectName} · {result.role === 'user' ? 'Вы' : 'Claude'}: {result.snippet}</small></span></button>)}{!searching && searchResults.length === 0 && <div className="global-search-empty">В истории совпадений нет</div>}</div>}
 
     <div className="sidebar-section-head sidebar-section-head--sessions"><button className="section-toggle" onClick={() => setSessionsOpen(!sessionsOpen)}>{sessionsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>Сессии</span><span className="section-count">{activeProject.sessions.length}</span></button><button className="icon-button tiny" aria-label="Новая сессия" onClick={onNewSession}><Plus size={15} /></button></div>
     {sessionsOpen && <div className="session-list">{activeProject.sessions.map(session => <div key={session.id} className={`session-row-wrap${session.id === activeSession.id ? ' is-active' : ''}`}>
@@ -51,8 +60,8 @@ export function Sidebar({ projects, activeProject, activeSession, search, onSear
     </div>
 
     <div className="sidebar-bottom">
-      <div className="connection-card"><span className="connection-icon"><Activity size={14} /></span><span><strong>Связь с агентом</strong><small><i className="status-dot" /> Прототип · offline</small></span><button className="icon-button tiny" aria-label="Статус"><MoreHorizontal size={14} /></button></div>
-      <button className="user-card" onClick={onSettings}><span className="user-avatar">М</span><span className="user-meta"><strong>Мой workspace</strong><small>Личный сервер</small></span><ChevronDown size={14} /></button>
+      <div className="connection-card"><span className="connection-icon"><Activity size={14} /></span><span><strong>Claude Code CLI</strong><small><i className={`status-dot${cliStatus?.loginFilePresent && cliStatus.enabled ? ' status-dot--online' : ''}`} />{!cliStatus?.installed ? 'Ожидает установки' : cliStatus.enabled ? cliStatus.loginFilePresent ? 'Официальный вход активен' : 'Нужен вход владельца' : 'Подключится на сервере'}</small></span><button className="icon-button tiny" aria-label="Статус"><MoreHorizontal size={14} /></button></div>
+      <button className="user-card" onClick={onSettings}><span className="user-avatar">{username.slice(0, 1).toUpperCase()}</span><span className="user-meta"><strong>{username}</strong><small>Владелец workspace</small></span><ChevronDown size={14} /></button>
     </div>
   </div>
 }

@@ -11,6 +11,9 @@ export interface Session {
 export interface Project {
   id: string
   name: string
+  description: string
+  instructions: string
+  defaultModel: string
   repo: string
   branch: string
   color: string
@@ -25,6 +28,15 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   time: string
+  attachments?: AttachmentInfo[]
+}
+
+export interface AttachmentInfo {
+  id: string
+  name: string
+  mimeType: string
+  byteSize: number
+  createdAt?: number
 }
 
 export interface ProjectFile {
@@ -38,4 +50,5 @@ export interface ChangeFile {
   path: string
   kind: 'M' | 'A' | 'D'
   staged: boolean
+  unstaged?: boolean
 }

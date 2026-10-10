@@ -1,0 +1,4 @@
+{$POLAR_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy polar-app:3000
+}

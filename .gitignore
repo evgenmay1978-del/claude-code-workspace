@@ -3,3 +3,10 @@ dist/
 *.tsbuildinfo
 .env
 .env.*
+.data/
+dist-server/
+workspaces/
+backups/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
