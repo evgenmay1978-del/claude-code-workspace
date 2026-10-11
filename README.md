@@ -4,8 +4,8 @@ A private, single-owner web workspace for Claude Code. It combines project conve
 
 > **Коротко по-русски.** Приватное self-hosted веб-приложение «Polar Workspace»: чаты, проекты,
 > файлы, Git и настоящий терминал в браузере. Все запросы уходят в **официальный Claude Code CLI**
-> по подписке — без API-ключей, SDK и посредников. Ставится на свой Linux-VPS через Docker Compose
-> и Caddy: `./scripts/setup.sh` → откройте `https://ваш-домен` → создайте владельца → в проекте
+> по подписке — без API-ключей, SDK и посредников. На уже созданном Ubuntu VPS используйте
+> `./scripts/install-ubuntu.sh` → откройте `https://ваш-домен` → создайте владельца → в проекте
 > откройте **Терминал** и выполните `claude`, чтобы пройти официальный вход. Подробности ниже.
 
 > **Not an Anthropic product.** This project launches the unmodified official Claude Code CLI. It does not use the Anthropic Messages API, an Anthropic SDK, an API key, or a proxy. It is designed for the server owner’s personal workspace only. Do not expose it as a multi-user service or route your subscription credentials/usage for other people. Review Anthropic’s current [Claude Code Legal & Compliance](https://docs.anthropic.com/en/docs/claude-code/legal-and-compliance) and plan terms before use.
@@ -25,7 +25,7 @@ The application has its own local history and project data. It does **not** sync
 
 ## Requirements
 
-- A Linux VPS with Docker Engine and the Docker Compose v2 plugin (`docker compose`). Claude Code documents a 4 GB RAM minimum; allow additional memory for the web app, native dependencies, and active coding sessions.
+- A pre-created Ubuntu 22.04, 24.04 or 26.04 LTS VPS (64-bit `amd64` or `arm64`) with a normal owner account and `sudo`. The installer can install Docker Engine and Compose v2 from Docker's official apt repository. Claude Code documents a 4 GB RAM minimum; allow additional memory for the web app, native dependencies, and active coding sessions.
 - A public DNS name with an `A` record (and an `AAAA` record only if IPv6 is routed to the VPS).
 - Inbound TCP ports **80** and **443** open. UDP 443 is optional and enables HTTP/3.
 - An official Claude Code login owned by the one person using this private installation, with a plan and region supported by Anthropic.
@@ -34,13 +34,12 @@ The application has its own local history and project data. It does **not** sync
 
 The installer configures an **already-created** Linux host; it does not create a free cloud account, VM, domain, or DNS record. Free web-hosting tiers commonly sleep, lose local files, or lack enough memory for this CLI workspace. See [the verified free-hosting assessment](docs/FREE_HOSTING.md) for current provider limits and the Anthropic supported-region boundary. This project will not use a tunnel or foreign server to disguise an unsupported access location.
 
-The app container runs as UID 10001, is read-only except for its explicit data volumes and `/tmp`, drops Linux capabilities, and is not published directly to the host. Caddy is the only service binding public ports.
+The app container runs as UID 10001, is read-only except for its explicit data volumes and `/tmp`, drops Linux capabilities, and is not published directly to the host. Caddy is the only service binding public ports. Docker warns that published container ports can bypass UFW rules; this installer does not alter host or provider firewall settings. Configure the cloud firewall deliberately and review Docker's [firewall guidance](https://docs.docker.com/engine/network/packet-filtering-firewalls/#docker-and-ufw).
 
 ## Install on an Ubuntu VPS
 
 1. Point your domain at the VPS and allow DNS to propagate. If the VPS does not accept IPv6, remove any `AAAA` record for this hostname.
-2. Install Docker Engine and the Compose v2 plugin using Docker’s official instructions. Place the checkout in a directory controlled by the owner account; membership in the `docker` group is effectively root access.
-3. Clone the public repository:
+2. Clone the public repository under a normal owner account (not `root`):
 
    ```bash
    gh repo clone evgenmay1978-del/claude-code-workspace
@@ -48,26 +47,26 @@ The app container runs as UID 10001, is read-only except for its explicit data v
    ```
 
    If `gh` is not installed, use Git over SSH or HTTPS with your existing GitHub access.
-4. Run the setup script and enter the public DNS name:
+3. From the checkout, run the Ubuntu installer and enter the already-configured public DNS name when prompted:
 
    ```bash
-   ./scripts/setup.sh
+   ./scripts/install-ubuntu.sh
    ```
 
-   It creates a mode-0600 `.env`, validates the Compose configuration, builds the image, and starts the app and Caddy. It does not write an owner password or any Anthropic credential to `.env`.
-5. Open `https://your-domain`, create the one local workspace owner account, and use a unique password of at least 12 characters. Initial setup is available only while no owner exists; there is no public registration after setup.
-6. Sign in, open a project’s **Terminal**, and run:
+   If Docker Engine/Compose v2 are absent, it asks permission and installs the official packages from Docker's apt repository. Then it creates a mode-0600 `.env`, validates Compose, builds the image, and starts the app and Caddy. It does not create a cloud account or VM, register a domain, change firewall rules, or write an owner password/Anthropic credential to `.env`. If Docker is already installed, you can run `./scripts/setup.sh` directly.
+4. Open `https://your-domain`, create the one local workspace owner account, and use a unique password of at least 12 characters. Initial setup is available only while no owner exists; there is no public registration after setup.
+5. Sign in, open a project’s **Terminal**, and run:
 
    ```text
    claude
    ```
 
    Complete the login flow displayed by the official CLI in the terminal. If it prints an authorization URL or code, open that URL yourself and finish the flow on Anthropic’s own page. Do not paste passwords, browser cookies, access tokens, or credential files into the web app, chat, or issue tracker. The CLI stores its own configuration in the private `polar_claude_config` volume.
-7. Confirm the app and reverse proxy are healthy:
+6. Confirm the app and reverse proxy are healthy:
 
    ```bash
-   docker compose ps
-   docker compose logs --tail=100 polar-app caddy
+   sudo docker compose ps
+   sudo docker compose logs --tail=100 polar-app caddy
    ```
 
 The web-app password and Claude Code CLI login are separate. The first protects this workspace; the second is handled by the unmodified CLI. If a CLI session expires, sign in again through `claude` in the in-app Terminal.
@@ -78,10 +77,10 @@ From the checkout, fetch the latest approved changes and rebuild the service:
 
 ```bash
 git pull --ff-only origin main
-docker compose up -d --build
+sudo docker compose up -d --build
 ```
 
-The named data volumes survive rebuilds and container replacement. Do not run `docker compose down -v` unless you intend to delete all application data and CLI configuration.
+The named data volumes survive rebuilds and container replacement. Do not run `sudo docker compose down -v` unless you intend to delete all application data and CLI configuration.
 
 Run this at least once a month: `DISABLE_AUTOUPDATER=1` keeps the bundled Claude Code CLI pinned, and Anthropic periodically raises the minimum supported CLI version — a stale binary starts failing with an unclear error. After updating, check the in-app Terminal: `claude --version`.
 
@@ -119,7 +118,7 @@ Restore from a backup (this replaces the current app database, workspace files, 
 ./scripts/restore.sh backups/polar-YYYYMMDDTHHMMSSZ.tar.gz
 ```
 
-The restore script validates the archive layout, stops the app, and requires you to type `RESTORE` before replacing data. Keep a second copy of the current state before restoring. Once complete, check `docker compose ps` and test the app over HTTPS.
+The restore script validates the archive layout, stops the app, and requires you to type `RESTORE` before replacing data. Keep a second copy of the current state before restoring. Once complete, check `sudo docker compose ps` and test the app over HTTPS.
 
 ## Configuration and operations
 
@@ -128,8 +127,8 @@ The restore script validates the archive layout, stops the app, and requires you
 - `TZ` (default `America/Los_Angeles`) plus `LANG`/`LC_ALL` (`en_US.UTF-8`) set the container locale so the CLI timestamps match the owner's time zone.
 - `CLAUDE_STREAM_TIMEOUT_MS` (default 30 minutes) cancels a hung CLI run, `MAX_CONCURRENT_STREAMS` (default 3) caps parallel runs, `CLAUDE_STREAM_HEARTBEAT_MS` (default 25 s) keeps SSE alive through proxies. A second parallel run for the same chat is rejected with `409 stream_in_progress`.
 - Health check: `GET /_app/health` (intentionally unauthenticated for container readiness).
-- Application logs: `docker compose logs -f polar-app`; proxy/TLS logs: `docker compose logs -f caddy`.
-- Restart services after changing `.env`: `docker compose up -d`.
+- Application logs: `sudo docker compose logs -f polar-app`; proxy/TLS logs: `sudo docker compose logs -f caddy`.
+- Restart services after changing `.env`: `sudo docker compose up -d`.
 - The app does not mount the Docker socket, host root, or home directory. The owner’s terminal is still a real shell inside the app container and can read/write the mounted owner workspaces and CLI volume; protect the owner account and VPS accordingly.
 
 ## Authentication and privacy boundaries

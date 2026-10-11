@@ -21,6 +21,20 @@ if grep -qE '(^/|(^|/)\.\.(/|$))' <<<"$listing"; then
   exit 1
 fi
 
+DOCKER=(docker)
+if ! docker info >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+    DOCKER=(sudo docker)
+  else
+    echo "The Docker daemon is not available to this account (even through sudo)." >&2
+    exit 1
+  fi
+fi
+if ! "${DOCKER[@]}" compose version >/dev/null 2>&1; then
+  echo "Docker Compose v2 is required (docker compose)." >&2
+  exit 1
+fi
+
 echo "WARNING: restoring replaces the existing database, workspace files and Claude CLI configuration."
 read -r -p "Type RESTORE to continue: " confirmation
 if [[ "$confirmation" != "RESTORE" ]]; then
@@ -29,9 +43,9 @@ if [[ "$confirmation" != "RESTORE" ]]; then
 fi
 
 echo "Stopping the app before replacing persistent data..."
-docker compose stop polar-app
+"${DOCKER[@]}" compose stop polar-app
 
-docker compose run --rm -T --no-deps \
+"${DOCKER[@]}" compose run --rm -T --no-deps \
   -v "$archive:/restore/polar-backup.tar.gz:ro" \
   --entrypoint /bin/sh polar-app -c '
     set -eu
@@ -44,5 +58,5 @@ docker compose run --rm -T --no-deps \
     chown -R 10001:10001 /data /workspaces /claude-config
   '
 
-docker compose up -d --no-deps polar-app
-echo "Restore finished. Check service health with: docker compose ps"
+"${DOCKER[@]}" compose up -d --no-deps polar-app
+echo "Restore finished. Check service health with: sudo docker compose ps"

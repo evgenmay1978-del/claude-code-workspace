@@ -16,7 +16,9 @@ DuckDNS даёт бесплатный динамический DNS-поддом�
 - **Railway Free:** официальная тарифная таблица показывает `$1/month` included usage, предел `0.5 GB RAM` на сервис и volume, а custom domains для Free отсутствуют. Это ограниченный кредит, а не гарантированный круглосуточный хостинг требуемой мощности. [3]
 - **Cloudflare Quick Tunnel:** создаёт временный случайный `trycloudflare.com` адрес без собственного домена; URL перестаёт работать с остановкой процесса, гарантий uptime нет, hostname меняется, а **SSE не поддерживается**. Поскольку чат этого приложения работает через SSE, Quick Tunnel не обеспечивает полный чат даже как долгосрочный бесплатный endpoint. [7]
 
-Установщик `scripts/setup.sh` работает **на уже созданном Linux-хосте**: проверяет Docker Engine/Compose, принимает готовое публичное доменное имя, записывает локальный `.env`, собирает контейнеры и запускает Caddy. Он не создаёт облачный аккаунт/VM, не покупает/регистрирует домен, не устанавливает Docker, не меняет firewall/router и не подтверждает личность у провайдера. Поэтому он не является кнопкой «бесплатно создать интернет-хостинг из ничего».
+`scripts/install-ubuntu.sh` запускается из checkout на уже созданной Ubuntu 22.04/24.04/26.04 LTS VM. После явного согласия он устанавливает Docker Engine и Compose v2 из официального Docker apt repository, если они ещё не готовы, затем запускает `scripts/setup.sh`: владелец вводит заранее настроенный DNS hostname, а Caddy получает HTTPS при доступных DNS и входящих портах. [8] [9]
+
+Этот установщик не создаёт облачный аккаунт/VM, не покупает/регистрирует домен, не меняет cloud firewall, не управляет router и не подтверждает личность у провайдера. Docker предупреждает, что опубликованные container ports могут обходить правила UFW; поэтому скрипт намеренно не переписывает firewall автоматически. Входящие TCP 80/443 владелец разрешает отдельно в сетевой панели своего host/provider. [8]
 
 ## Важное ограничение Claude Code
 
@@ -39,3 +41,5 @@ DuckDNS даёт бесплатный динамический DNS-поддом�
 [5]: https://www.oracle.com/cloud/free/ "Oracle Cloud Free Tier eligibility and verification"
 [6]: https://www.duckdns.org/ "DuckDNS dynamic DNS"
 [7]: https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/ "Cloudflare Quick Tunnel limits"
+[8]: https://docs.docker.com/engine/install/ubuntu/ "Docker Engine installation on Ubuntu"
+[9]: https://docs.docker.com/compose/install/linux/ "Docker Compose plugin installation on Linux"
