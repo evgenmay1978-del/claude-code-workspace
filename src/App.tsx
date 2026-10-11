@@ -144,6 +144,17 @@ function App() {
 
   useEffect(() => { void refreshAuth() }, [refreshAuth])
   useEffect(() => {
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'k') return
+      if (!document.getElementById('project-search')) return
+      event.preventDefault()
+      if (window.matchMedia('(max-width: 760px)').matches) setSidebarOpen(true)
+      window.setTimeout(() => document.getElementById('project-search')?.focus(), 0)
+    }
+    window.addEventListener('keydown', handleGlobalShortcut)
+    return () => window.removeEventListener('keydown', handleGlobalShortcut)
+  }, [])
+  useEffect(() => {
     const query = projectSearch.trim()
     if (query.length < 2) { setMessageSearchResults([]); setMessageSearchBusy(false); return }
     let current = true
@@ -266,20 +277,21 @@ function App() {
     void api.deleteAttachment(activeProject.id, activeSession.id, attachmentId).catch(cause => showToast(cause instanceof Error ? cause.message : 'Не удалось удалить вложение.'))
   }
 
-  const sendMessage = useCallback((content: string, model: 'sonnet' | 'opus' | 'haiku' = 'sonnet', webSearch = false) => {
+  const sendMessage = useCallback((content: string, model: 'sonnet' | 'opus' | 'haiku' = 'sonnet', webSearch = false, replay?: { attachments: AttachmentInfo[] }) => {
     if (!activeProject || !activeSession || busy || uploadBusy) return
     const queueKey = `${activeProject.id}:${activeSession.id}`
-    const queuedAttachments = attachmentQueues[queueKey] ?? []
-    const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content, attachments: queuedAttachments, time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
+    const queuedAttachments = replay?.attachments ?? attachmentQueues[queueKey] ?? []
+    const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content, model, attachments: queuedAttachments, time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
     const assistantId = `assistant-${Date.now()}`
     setActivity([])
     setBusy(true)
-    setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '', time: 'сейчас' }])
+    setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '', model, time: 'сейчас' }])
     void api.streamMessage({ projectId: activeProject.id, sessionId: activeSession.id, content, model, webSearch, contextFiles: files.filter(file => file.kind === 'file' && file.context).map(file => file.path), attachmentIds: queuedAttachments.map(file => file.id) }, event => {
-      if (event.type === 'started' && queuedAttachments.length) setAttachmentQueues(current => ({ ...current, [queueKey]: [] }))
+      if (event.type === 'started' && !replay && queuedAttachments.length) setAttachmentQueues(current => ({ ...current, [queueKey]: [] }))
       if (event.type === 'delta') setMessages(current => current.map(message => message.id === assistantId ? { ...message, content: message.content + event.text } : message))
       if (event.type === 'activity') setActivity(current => [...current, event.tool])
       if (event.type === 'done') {
+        setMessages(current => current.map(message => message.id === assistantId ? { ...message, inputTokens: event.inputTokens, outputTokens: event.outputTokens } : message))
         setBusy(false)
         setActiveController(null)
         void api.messages(activeProject.id, activeSession.id).then(setMessages).catch(() => undefined)
@@ -294,6 +306,11 @@ function App() {
       }
     }, error => { setBusy(false); setActiveController(null); setMessages(current => current.filter(message => message.id !== assistantId)); showToast(error.message) }).then(setActiveController)
   }, [activeProject, activeSession, attachmentQueues, busy, files, refreshGit, showToast, uploadBusy])
+
+  const retryMessage = useCallback((message: ChatMessage) => {
+    const model = message.model === 'opus' || message.model === 'haiku' ? message.model : 'sonnet'
+    sendMessage(message.content, model, false, { attachments: message.attachments ?? [] })
+  }, [sendMessage])
 
   const stopMessage = () => {
     activeController?.abort()
@@ -348,7 +365,7 @@ function App() {
       </header>
       <div className="workspace-subbar"><div className="view-tabs">{viewEntries.map(({ key, icon: Icon }) => <button key={key} className={`view-tab${view === key ? ' is-active' : ''}`} onClick={() => setView(key)}><Icon size={14} strokeWidth={1.9} /><span>{key === 'Source Control' ? 'Source Control' : key === 'Chat' ? 'Чат' : key === 'Terminal' ? 'Shell' : 'Файлы'}</span>{key === 'Source Control' && <span className="tab-count">{changes.length}</span>}</button>)}</div><div className="subbar-actions"><span className="subbar-session"><span className={`session-indicator session-${activeSession.status}`} />{activeSession.title}</span><button className="context-toggle icon-button" onClick={() => setContextOpen(current => !current)} aria-label="Переключить контекст" aria-expanded={contextOpen} title="Контекст"><PanelRightClose size={15} /></button><button className="new-session-button" onClick={() => { void createSession() }}><Plus size={14} /><span>Новый чат</span></button></div></div>
       <div className="workspace-body"><section className={`work-area work-area--${view.toLowerCase().replace(' ', '-')}`}>
-        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} attachments={pendingAttachments} uploadBusy={uploadBusy} webSearchAvailable={Boolean(cliStatus?.webSearchAvailable)} onUploadFiles={files => { void uploadFiles(files) }} onRemoveAttachment={removeQueuedAttachment} onSend={sendMessage} onResend={value => sendMessage(value)} onStop={stopMessage} />}
+        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} attachments={pendingAttachments} uploadBusy={uploadBusy} webSearchAvailable={Boolean(cliStatus?.webSearchAvailable)} onUploadFiles={files => { void uploadFiles(files) }} onRemoveAttachment={removeQueuedAttachment} onSend={sendMessage} onResend={value => sendMessage(value)} onRetryLastMessage={retryMessage} onStop={stopMessage} />}
         {view === 'Terminal' && <Suspense fallback={<div className="file-loading">Загружаем терминал…</div>}><TerminalView project={activeProject} terminalId={terminalIds[activeProject.id] ?? null} onTerminalIdChange={updateTerminalId} /></Suspense>}
         {view === 'Files' && <FilesView projectId={activeProject.id} files={files} selectedFile={selectedFile} projectName={activeProject.name} branch={gitStatus?.branch ?? ''} onSelectFile={setSelectedFile} onRefresh={() => { void refreshFiles() }} />}
         {view === 'Source Control' && <SourceControlView status={gitStatus} onRefresh={() => { void refreshGit(activeProject.id) }} onInitialize={() => { void initializeGit() }} onToggleStaged={path => { void toggleStaged(path) }} onCommit={message => { void commitChanges(message) }} onOpenFile={path => { setSelectedFile(path); setView('Files') }} project={activeProject} />}

@@ -174,8 +174,8 @@ export const api = {
   gitUnstage: (projectId: string, path: string) => requestJson<{ staged: boolean }>(`/api/projects/${encodeURIComponent(projectId)}/git/unstage`, { method: 'POST', body: JSON.stringify({ path }) }),
   gitCommit: (projectId: string, message: string) => requestJson<{ hash: string; message: string }>(`/api/projects/${encodeURIComponent(projectId)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
   async messages(projectId: string, sessionId: string) {
-    const result = await requestJson<{ messages: { id: string; role: string; content: unknown; createdAt: number }[] }>(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/messages`)
-    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), attachments: attachmentMetadata(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
+    const result = await requestJson<{ messages: { id: string; role: string; content: unknown; model: string; inputTokens: number; outputTokens: number; createdAt: number }[] }>(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/messages`)
+    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), model: message.model, inputTokens: message.inputTokens, outputTokens: message.outputTokens, attachments: attachmentMetadata(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
   },
 }
 

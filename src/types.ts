@@ -28,6 +28,9 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   time: string
+  model?: string
+  inputTokens?: number
+  outputTokens?: number
   attachments?: AttachmentInfo[]
 }
 

@@ -1,12 +1,12 @@
-import { useEffect, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { ArrowDownToLine, ArrowUp, Check, CheckCheck, ChevronDown, FileText, FileType2, Globe2, Image, Paperclip, RefreshCw, ShieldCheck, Square, ThumbsUp, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
+import { ArrowDown, ArrowDownToLine, ArrowUp, Check, CheckCheck, ChevronDown, Copy, FileText, FileType2, Globe2, Image, Paperclip, Pencil, RefreshCw, ShieldCheck, Square, X } from 'lucide-react'
 import type { AttachmentInfo, ChatMessage, Project, Session } from '../types'
 import { api } from '../lib/api'
 import { MarkdownContent } from './MarkdownContent'
 
 type Model = 'sonnet' | 'opus' | 'haiku'
 
-export function ChatView({ project, session, contextCount, messages, busy, activity, attachments, uploadBusy, webSearchAvailable, onUploadFiles, onRemoveAttachment, onSend, onResend, onStop }: {
+export function ChatView({ project, session, contextCount, messages, busy, activity, attachments, uploadBusy, webSearchAvailable, onUploadFiles, onRemoveAttachment, onSend, onResend, onRetryLastMessage, onStop }: {
   project: Project
   session: Session
   contextCount: number
@@ -20,20 +20,47 @@ export function ChatView({ project, session, contextCount, messages, busy, activ
   onRemoveAttachment: (attachmentId: string) => void
   onSend: (value: string, model: Model, webSearch: boolean) => void
   onResend: (value: string) => void
+  onRetryLastMessage: (message: ChatMessage) => void
   onStop: () => void
 }) {
   const [draft, setDraft] = useState('')
   const [model, setModel] = useState<Model>(project.defaultModel === 'opus' || project.defaultModel === 'haiku' ? project.defaultModel : 'sonnet')
   const [webSearch, setWebSearch] = useState(false)
   const [dragActive, setDragActive] = useState(false)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null)
+  const [copyFeedback, setCopyFeedback] = useState<{ id: string; copied: boolean } | null>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const stickToBottomRef = useRef(true)
+  const lastUserMessage = [...messages].reverse().find(message => message.role === 'user')
+  const sessionUsage = messages.reduce((total, message) => {
+    if (message.role !== 'assistant') return total
+    return { input: total.input + (message.inputTokens ?? 0), output: total.output + (message.outputTokens ?? 0) }
+  }, { input: 0, output: 0 })
 
   useEffect(() => { setModel(project.defaultModel === 'opus' || project.defaultModel === 'haiku' ? project.defaultModel : 'sonnet') }, [project.id, project.defaultModel])
+  useEffect(() => {
+    stickToBottomRef.current = true
+    setIsAtBottom(true)
+    setDraft('')
+    setEditingMessage(null)
+  }, [session.id])
+  useEffect(() => {
+    const container = scrollAreaRef.current
+    if (container && stickToBottomRef.current) {
+      container.scrollTop = container.scrollHeight
+      setIsAtBottom(true)
+    }
+  }, [messages, busy, activity])
 
   const send = () => {
     const value = draft.trim()
     if ((!value && attachments.length === 0) || busy || uploadBusy) return
-    onSend(value || 'Проанализируй прикреплённые файлы.', model, webSearch && webSearchAvailable)
+    if (editingMessage) onRetryLastMessage({ ...editingMessage, content: value, model })
+    else onSend(value || 'Проанализируй прикреплённые файлы.', model, webSearch && webSearchAvailable)
     setDraft('')
+    setEditingMessage(null)
   }
   const pickFiles = (files: FileList | File[]) => {
     const allowed = Array.from(files).slice(0, 8)
@@ -48,34 +75,66 @@ export function ChatView({ project, session, contextCount, messages, busy, activ
     const files = Array.from(event.clipboardData.files)
     if (files.length) { event.preventDefault(); pickFiles(files) }
   }
+  const handleScroll = () => {
+    const container = scrollAreaRef.current
+    if (!container) return
+    const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 96
+    stickToBottomRef.current = nearBottom
+    setIsAtBottom(nearBottom)
+  }
+  const scrollToLatest = () => {
+    const container = scrollAreaRef.current
+    if (!container) return
+    stickToBottomRef.current = true
+    setIsAtBottom(true)
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+  }
+  const editMessage = (message: ChatMessage) => {
+    setEditingMessage(message)
+    setDraft(message.content)
+    if (message.model === 'opus' || message.model === 'haiku' || message.model === 'sonnet') setModel(message.model)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
+  const copyAnswer = async (message: ChatMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopyFeedback({ id: message.id, copied: true })
+    } catch {
+      setCopyFeedback({ id: message.id, copied: false })
+    }
+    window.setTimeout(() => setCopyFeedback(current => current?.id === message.id ? null : current), 1800)
+  }
+  const formatTokens = (value: number) => new Intl.NumberFormat('ru-RU').format(value)
 
   return <div className={`chat-view${dragActive ? ' chat-view--drag-active' : ''}`} onDragOver={event => { event.preventDefault(); setDragActive(true) }} onDragLeave={event => { if (event.target === event.currentTarget) setDragActive(false) }} onDrop={handleDrop}>
     {dragActive && <div className="chat-drop-overlay" aria-live="polite"><Paperclip size={22} /><strong>Отпустите, чтобы прикрепить</strong><span>Файл будет сохранён только в этом чате</span></div>}
-    <div className="chat-scroll-area">
+    <div className="chat-scroll-area" ref={scrollAreaRef} onScroll={handleScroll}>
       {messages.length === 0 && <div className="session-intro"><div className="intro-orbit"><div className="intro-orbit__ring" /><div className="intro-core"><span className="brand-mark"><span /><span /><i /></span></div><span className="orbit-point" /></div><div className="intro-meta"><span className="session-path">{project.name}<span>/</span>{session.title}</span><h1>С чего начнём?</h1><p>Задайте вопрос по проекту или поручите Claude Code исследовать рабочую папку.</p><div className="intro-chips"><span>{contextCount} файлов в контексте</span><span className="intro-safe"><ShieldCheck size={12} /> Рабочее пространство проекта</span></div></div></div>}
       {messages.length > 0 && <div className="conversation-divider"><span>История этой сессии</span><i /></div>}
-      <div className="messages-list">{messages.map((message, index) => <article key={message.id} className={`message message--${message.role}`}>
+      <div className="messages-list" aria-live="polite">{messages.map((message, index) => <article key={message.id} className={`message message--${message.role}`}>
         <div className={`message-avatar message-avatar--${message.role}`}>{message.role === 'assistant' ? <span className="mini-claude-mark"><i /><i /><i /><i /></span> : 'Я'}</div>
-        <div className="message-content-wrap"><div className="message-meta"><strong>{message.role === 'assistant' ? 'Claude' : 'Вы'}</strong>{message.role === 'assistant' && <span className="message-model">{model}</span>}<span className="message-time">{message.time}</span></div>
+        <div className="message-content-wrap"><div className="message-meta"><strong>{message.role === 'assistant' ? 'Claude' : 'Вы'}</strong>{message.role === 'assistant' && <span className="message-model">{message.model ?? model}</span>}<span className="message-time">{message.time}</span></div>
           {message.attachments?.length ? <div className="message-attachments">{message.attachments.map(file => <a key={file.id} className="message-attachment" href={api.attachmentDownloadUrl(project.id, file.id)} download={file.name}><AttachmentIcon mimeType={file.mimeType} /><span><strong>{file.name}</strong><small>{formatBytes(file.byteSize)}</small></span><ArrowDownToLine size={14} /></a>)}</div> : null}
           {message.content && <div className="message-body"><MarkdownContent source={message.content} /></div>}
-          {message.role === 'assistant' && index === messages.length - 1 && !busy && <div className="message-reactions"><button aria-label="Полезный ответ"><ThumbsUp size={13} /></button><button onClick={() => onResend('Продолжи с текущего результата и предложи следующий небольшой шаг.')}><RefreshCw size={13} /> Продолжить</button><span><CheckCheck size={12} /> История сохранена</span></div>}
+          {message.role === 'user' && message.id === lastUserMessage?.id && !busy && <div className="message-actions"><button onClick={() => editMessage(message)} aria-label="Исправить последний запрос"><Pencil size={13} /> Исправить</button><button onClick={() => onRetryLastMessage(message)} aria-label="Повторить последний запрос"><RefreshCw size={13} /> Повторить</button></div>}
+          {message.role === 'assistant' && !busy && message.content.trim() && <div className="message-reactions"><button onClick={() => void copyAnswer(message)} aria-label="Скопировать ответ"><Copy size={13} />{copyFeedback?.id === message.id ? copyFeedback.copied ? 'Скопировано' : 'Не скопировано' : 'Копировать ответ'}</button>{index === messages.length - 1 && <button onClick={() => onResend('Продолжи с текущего результата и предложи следующий небольшой шаг.')}><RefreshCw size={13} /> Продолжить</button>}{(message.inputTokens || message.outputTokens) ? <span className="message-token-usage" title="Использование токенов, сообщённое Claude Code CLI">CLI: {formatTokens(message.inputTokens ?? 0)} вход · {formatTokens(message.outputTokens ?? 0)} выход</span> : null}{index === messages.length - 1 && <span><CheckCheck size={12} /> История сохранена</span>}</div>}
         </div>
       </article>)}{busy && <div className="message message--assistant"><div className="message-avatar message-avatar--assistant"><span className="mini-claude-mark"><i /><i /><i /><i /></span></div><div className="message-content-wrap"><div className="message-meta"><strong>Claude Code</strong><span className="message-model">{model}</span><span className="message-time">сейчас</span></div><div className="typing-indicator"><span /><span /><span /> <small>собирает ответ…</small></div></div></div>}
       {busy && activity.length > 0 && <div className="activity-feed" aria-live="polite"><span className="activity-feed-label">Ход работы</span>{activity.slice(-4).map((item, index) => <span key={`${item}-${index}`}><Check size={11} /> {item}</span>)}</div>}
       {busy && messages.at(-1)?.role !== 'assistant' && <div className="message message--assistant"><div className="message-avatar message-avatar--assistant"><span className="mini-claude-mark"><i /><i /><i /><i /></span></div><div className="message-content-wrap"><div className="typing-indicator"><span /><span /><span /> <small>Claude Code отвечает…</small></div></div></div>}
       </div>
     </div>
+    {!isAtBottom && messages.length > 0 && <button className="chat-scroll-bottom" onClick={scrollToLatest}><ArrowDown size={15} /> К последним сообщениям</button>}
     <div className="composer-area"><div className="composer-card">
+      {editingMessage && <div className="message-edit-banner"><div><strong>Исправляете последний запрос</strong><span>Изменённый текст отправится новым сообщением; история не удаляется.</span></div><button type="button" onClick={() => { setDraft(''); setEditingMessage(null) }} aria-label="Отменить исправление"><X size={15} /></button></div>}
       {attachments.length > 0 && <div className="upload-queue" aria-label="Вложения для следующего сообщения">{attachments.map(file => <div className="upload-queue-item" key={file.id}><AttachmentIcon mimeType={file.mimeType} /><span><strong>{file.name}</strong><small>{formatBytes(file.byteSize)}</small></span><button type="button" onClick={() => onRemoveAttachment(file.id)} disabled={busy || uploadBusy} aria-label={`Убрать ${file.name}`}><X size={14} /></button></div>)}</div>}
-      <textarea value={draft} onChange={event => setDraft(event.target.value)} onPaste={handlePaste} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); send() } }} rows={2} placeholder="Спросите Claude или опишите задачу для проекта…" aria-label="Сообщение Claude" />
+      <textarea ref={textareaRef} value={draft} onChange={event => setDraft(event.target.value)} onPaste={handlePaste} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); send() } }} rows={2} placeholder="Спросите Claude или опишите задачу для проекта…" aria-label="Сообщение Claude" />
       <div className="composer-footer"><div className="composer-tools">
         <label className={`composer-context composer-attach${uploadBusy ? ' is-busy' : ''}`} title="Прикрепить файл"><Paperclip size={14} /><span>{uploadBusy ? 'Загрузка…' : 'Файл'}</span><input type="file" multiple accept=".txt,.md,.mdx,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp" disabled={busy || uploadBusy || attachments.length >= 8} onChange={event => { if (event.target.files) pickFiles(event.target.files); event.target.value = '' }} /></label>
         <button className={`composer-context${webSearch ? ' is-active' : ''}${!webSearchAvailable ? ' is-unavailable' : ''}`} onClick={() => webSearchAvailable && setWebSearch(current => !current)} aria-pressed={webSearch} disabled={!webSearchAvailable} title={webSearchAvailable ? 'Разрешить веб-поиск штатными инструментами Claude Code' : 'Веб-поиск CLI недоступен на этом сервере'}><Globe2 size={13} /><span>Поиск</span></button>
         <button className="composer-context" title="Файлы проекта, включённые в контекст"><FileType2 size={13} /><span>{contextCount} в контексте</span><ChevronDown size={12} /></button>
         <label className="model-select"><span className="model-orb" /><select aria-label="Модель Claude" value={model} onChange={event => setModel(event.target.value as Model)}><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="haiku">Haiku</option></select><ChevronDown size={11} /></label>
-      </div><div className="composer-send-wrap">{busy ? <button className="send-button send-button--stop" onClick={onStop} aria-label="Остановить ответ"><Square size={13} /></button> : <><span className="composer-hint"><kbd>⌘</kbd><kbd>↵</kbd></span><button className={`send-button${draft.trim() || attachments.length ? ' send-button--ready' : ''}`} onClick={send} disabled={(!draft.trim() && !attachments.length) || uploadBusy} aria-label="Отправить сообщение"><ArrowUp size={16} /></button></>}</div></div>
-    </div><div className="composer-disclaimer"><span><ShieldCheck size={12} /> Выполнение на сервере владельца</span><span>{busy ? 'Ответ поступает потоково' : 'Лимиты — по вашей подписке Claude Code'}</span></div></div>
+      </div><div className="composer-send-wrap">{busy ? <button className="send-button send-button--stop" onClick={onStop} aria-label="Остановить ответ"><Square size={13} /></button> : <><span className="composer-hint"><kbd>⌘</kbd><kbd>↵</kbd></span><button className={`send-button${draft.trim() || attachments.length ? ' send-button--ready' : ''}`} onClick={send} disabled={(!draft.trim() && !attachments.length) || uploadBusy} aria-label="Отправить сообщение"><ArrowUp size={16} /></button></>}</div></div></div><div className="composer-disclaimer"><span><ShieldCheck size={12} /> Выполнение на сервере владельца</span><span>{sessionUsage.input || sessionUsage.output ? `CLI · ${formatTokens(sessionUsage.input)} вход / ${formatTokens(sessionUsage.output)} выход токенов в этом чате` : busy ? 'Ответ поступает потоково' : 'Лимиты — по вашей подписке Claude Code'}</span></div></div>
   </div>
 }
 

@@ -89,5 +89,7 @@ describe('official CLI chat stream adapter', () => {
     const messages = await request(app).get(`/api/projects/${project.id}/sessions/${project.sessions[0].id}/messages`).set('Cookie', cookie).expect(200)
     expect(messages.body.messages.map((message: { role: string }) => message.role)).toEqual(['user', 'assistant'])
     expect(messages.body.messages[1].content).toEqual([{ type: 'text', text: 'Fake CLI response' }])
+    expect(messages.body.messages[1].inputTokens).toBe(7)
+    expect(messages.body.messages[1].outputTokens).toBe(4)
   })
 })

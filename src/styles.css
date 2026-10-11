@@ -816,3 +816,29 @@ kbd { font: 9px var(--mono); color: #75889a; background: rgba(186,210,228,.07); 
   .message-attachment { max-width: 100%; }
   .chat-drop-overlay { inset: 8px; text-align: center; }
 }
+
+
+/* Chat quality-of-life controls: preserve reading position and keep actions touch-accessible. */
+.chat-scroll-bottom { position: absolute; z-index: 8; left: 50%; bottom: 88px; display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 14px; transform: translateX(-50%); border: 1px solid rgba(255,128,102,.28); border-radius: 22px; color: #f0d7d1; background: rgba(12,32,47,.96); box-shadow: 0 8px 24px rgba(0,0,0,.32); cursor: pointer; font-size: 10px; backdrop-filter: blur(12px); }
+.chat-scroll-bottom:hover { color: #fff; border-color: rgba(255,128,102,.5); background: #183247; }
+.message-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 5px; opacity: .18; transition: opacity .15s ease; }
+.message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
+.message-actions button, .message-reactions button { min-height: 32px; }
+.message-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid rgba(158,189,209,.1); border-radius: 6px; color: #94a9b9; background: rgba(158,189,209,.035); cursor: pointer; font-size: 9px; }
+.message-actions button:hover { color: #f3c0b2; border-color: rgba(255,128,102,.23); background: rgba(255,128,102,.07); }
+.message-reactions { flex-wrap: wrap; row-gap: 4px; }
+.message-reactions .message-token-usage { color: #9ab3c2; font: 8px var(--mono); }
+.message-edit-banner { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 0 0 7px; padding: 8px 9px; border: 1px solid rgba(255,128,102,.18); border-radius: 7px; color: #f0c4b8; background: rgba(255,128,102,.06); }
+.message-edit-banner > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.message-edit-banner strong { font-size: 9px; font-weight: 600; }
+.message-edit-banner span { color: #9eacb8; font-size: 8px; line-height: 1.45; }
+.message-edit-banner button { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 auto; border: 0; border-radius: 6px; color: #9eacb8; background: transparent; cursor: pointer; }
+.message-edit-banner button:hover { color: #fff; background: rgba(255,255,255,.07); }
+.sidebar-search kbd { white-space: nowrap; }
+@media (max-width: 760px) {
+  .chat-scroll-bottom { bottom: calc(136px + env(safe-area-inset-bottom)); min-height: 44px; }
+  .message-actions { opacity: 1; }
+  .message-actions button, .message-reactions button { min-height: 44px; padding-left: 9px; padding-right: 9px; }
+  .message-reactions { gap: 5px; }
+  .message-reactions .message-token-usage { width: 100%; padding: 2px 4px; }
+}

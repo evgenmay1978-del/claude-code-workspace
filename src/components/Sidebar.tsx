@@ -35,7 +35,7 @@ export function Sidebar({ projects, activeProject, activeSession, search, onSear
       <button className="icon-button tiny" aria-label="Выбрать workspace"><ChevronDown size={15} /></button>
     </div>
 
-    <div className="sidebar-search"><Search size={14} /><input id="project-search" value={search} onChange={event => onSearch(event.target.value)} placeholder="Найти проект или чат" /><kbd>⌘ K</kbd></div>
+    <div className="sidebar-search"><Search size={14} /><input id="project-search" value={search} onChange={event => onSearch(event.target.value)} placeholder="Найти проект или чат" /><kbd>Ctrl/⌘ K</kbd></div>
 
     <div className="sidebar-section-head"><button className="section-toggle" onClick={() => setProjectsOpen(!projectsOpen)}>{projectsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<span>Проекты</span><span className="section-count">{projects.length}</span></button><button className="icon-button tiny" aria-label="Создать проект" onClick={onCreateProject}><Plus size={15} /></button></div>
     {projectsOpen && <div className="project-list">{filteredProjects.map(project => <button key={project.id} className={`project-row${project.id === activeProject.id ? ' is-active' : ''}`} onClick={() => onSelectProject(project)}>

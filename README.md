@@ -30,13 +30,17 @@ The application has its own local history and project data. It does **not** sync
 - Inbound TCP ports **80** and **443** open. UDP 443 is optional and enables HTTP/3.
 - An official Claude Code login owned by the one person using this private installation, with a plan and region supported by Anthropic.
 
+## Free hosting and domain
+
+The installer configures an **already-created** Linux host; it does not create a free cloud account, VM, domain, or DNS record. Free web-hosting tiers commonly sleep, lose local files, or lack enough memory for this CLI workspace. See [the verified free-hosting assessment](docs/FREE_HOSTING.md) for current provider limits and the Anthropic supported-region boundary. This project will not use a tunnel or foreign server to disguise an unsupported access location.
+
 The app container runs as UID 10001, is read-only except for its explicit data volumes and `/tmp`, drops Linux capabilities, and is not published directly to the host. Caddy is the only service binding public ports.
 
 ## Install on an Ubuntu VPS
 
 1. Point your domain at the VPS and allow DNS to propagate. If the VPS does not accept IPv6, remove any `AAAA` record for this hostname.
 2. Install Docker Engine and the Compose v2 plugin using Docker’s official instructions. Place the checkout in a directory controlled by the owner account; membership in the `docker` group is effectively root access.
-3. Clone this **private** repository using an account that has access:
+3. Clone the public repository:
 
    ```bash
    gh repo clone evgenmay1978-del/claude-code-workspace
