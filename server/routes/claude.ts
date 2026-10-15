@@ -7,6 +7,7 @@ import type { AppDatabase } from '../db.js'
 import { workspacesDirectory } from '../db.js'
 import { requireCsrf } from '../auth/router.js'
 import { getCliStatus, spawnClaude } from '../claude/runner.js'
+import { PermissionBroker, summarizeToolInput } from '../claude/permissions.js'
 import { listWorkspaceFiles } from '../workspaces/files.js'
 
 const chatRequest = z.object({
@@ -17,6 +18,13 @@ const chatRequest = z.object({
   webSearch: z.boolean().default(false),
   contextFiles: z.array(z.string().min(1).max(1024)).max(32).default([]),
   attachmentIds: z.array(z.string().uuid()).max(8).default([]),
+  permissionMode: z.enum(['ask', 'acceptEdits', 'plan']).default('ask'),
+}).strict()
+
+const permissionDecision = z.object({
+  sessionId: z.string().uuid(),
+  decision: z.enum(['allow', 'deny']),
+  message: z.string().max(500).optional(),
 }).strict()
 
 type ProjectRow = { id: string; name: string; instructions: string; workspace_path: string }
@@ -37,7 +45,7 @@ function titleFromPrompt(prompt: string): string {
   return cleaned.length > 48 ? `${cleaned.slice(0, 47)}…` : cleaned
 }
 
-export function createClaudeRouter(db: AppDatabase): Router {
+export function createClaudeRouter(db: AppDatabase, permissions = new PermissionBroker()): Router {
   const router = Router()
   // Активные стримы: id сессий, по которым прямо сейчас идёт ответ CLI.
   const activeStreams = new Set<string>()
@@ -121,10 +129,19 @@ export function createClaudeRouter(db: AppDatabase): Router {
     res.flushHeaders?.()
     sendEvent(res, 'started', { userMessageId, sessionId: session.id, cliSessionId, model: input.model, attachments: attachmentRows.map(({ id, original_name, mime_type, byte_size }) => ({ id, name: original_name, mimeType: mime_type, byteSize: byte_size })) })
 
+    // Мост подтверждений: CLI спрашивает разрешение через MCP-инструмент, владелец отвечает в чате.
+    const runToken = permissions.openRun({
+      sessionId: session.id,
+      onRequest: request => sendEvent(res, 'permission', request),
+      onResolved: (id, behavior, reason) => sendEvent(res, 'permission_resolved', { id, behavior, reason }),
+    })
+    const permissionEndpoint = `http://127.0.0.1:${req.socket.localPort}/_internal/claude/permission`
+
     let child: ReturnType<typeof spawnClaude>
     try {
-      child = spawnClaude({ prompt, cwd: project.workspace_path || workspacesDirectory, model: input.model, sessionId: cliSessionId, resume: Boolean(session.agent_session_id), webSearch: input.webSearch, instructions: project.instructions })
+      child = spawnClaude({ prompt, cwd: project.workspace_path || workspacesDirectory, model: input.model, sessionId: cliSessionId, resume: Boolean(session.agent_session_id), webSearch: input.webSearch, instructions: project.instructions, permissionMode: input.permissionMode, permissionBridge: { endpoint: permissionEndpoint, token: runToken } })
     } catch {
+      permissions.closeRun(runToken)
       db.prepare('UPDATE conversations SET status=?, updated_at=? WHERE id=?').run('error', Date.now(), session.id)
       sendEvent(res, 'error', { code: 'cli_start_failed', message: 'Не удалось запустить Claude Code CLI.' })
       return res.end()
@@ -146,11 +163,12 @@ export function createClaudeRouter(db: AppDatabase): Router {
       stopChild()
     }, numberFromEnv('CLAUDE_STREAM_TIMEOUT_MS', 30 * 60 * 1000, 500))
     streamTimer.unref()
-    const releaseStream = () => { clearInterval(heartbeat); clearTimeout(streamTimer); activeStreams.delete(session.id) }
+    const releaseStream = () => { clearInterval(heartbeat); clearTimeout(streamTimer); activeStreams.delete(session.id); permissions.closeRun(runToken) }
     activeStreams.add(session.id)
 
     let buffer = ''
     let assistantText = ''
+    const steps: { tool: string; summary: string }[] = []
     let stderr = ''
     let actualSessionId = cliSessionId
     let inputTokens = 0
@@ -163,8 +181,9 @@ export function createClaudeRouter(db: AppDatabase): Router {
       finished = true
       releaseStream()
       const endedAt = Date.now()
-      if (assistantText.trim()) {
-        db.prepare('INSERT INTO messages(id,conversation_id,role,content_json,model,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(), session.id, 'assistant', JSON.stringify([{ type: 'text', text: assistantText }]), input.model, inputTokens, outputTokens, endedAt)
+      if (assistantText.trim() || steps.length) {
+        const blocks = [...steps.map(step => ({ type: 'tool_use', name: step.tool, summary: step.summary })), ...(assistantText.trim() ? [{ type: 'text', text: assistantText }] : [])]
+        db.prepare('INSERT INTO messages(id,conversation_id,role,content_json,model,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?)').run(randomUUID(), session.id, 'assistant', JSON.stringify(blocks), input.model, inputTokens, outputTokens, endedAt)
       }
       if (inputTokens > 0 || outputTokens > 0) db.prepare('INSERT INTO usage_events(id,conversation_id,model,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?)').run(randomUUID(), session.id, input.model, inputTokens, outputTokens, endedAt)
       const succeeded = exitCode === 0 && !disconnected && !timedOut
@@ -193,8 +212,12 @@ export function createClaudeRouter(db: AppDatabase): Router {
         for (const block of Array.isArray(message?.content) ? message.content : []) {
           const type = (block as { type?: string }).type
           if (type === 'tool_use') {
-            const name = (block as { name?: string }).name
-            if (typeof name === 'string') sendEvent(res, 'activity', { tool: name })
+            const { name, input: toolInput } = block as { name?: string; input?: unknown }
+            if (typeof name === 'string') {
+              const summary = summarizeToolInput(name, toolInput && typeof toolInput === 'object' ? toolInput as Record<string, unknown> : {})
+              if (steps.length < 200) steps.push({ tool: name, summary })
+              sendEvent(res, 'activity', { tool: name, summary })
+            }
           }
         }
       }
@@ -242,6 +265,18 @@ export function createClaudeRouter(db: AppDatabase): Router {
         stopChild()
       }
     })
+  })
+
+  router.post('/permissions/:requestId', requireCsrf, (req, res) => {
+    const parsed = permissionDecision.safeParse(req.body)
+    if (!parsed.success) return res.status(400).json({ error: 'invalid_permission_decision', message: 'Некорректное решение.' })
+    const accepted = permissions.decide(String(req.params.requestId), parsed.data.sessionId, parsed.data.decision, parsed.data.message)
+    if (!accepted) return res.status(404).json({ error: 'permission_not_pending', message: 'Запрос уже закрыт: ответ получен, истёк срок или запуск завершён.' })
+    res.json({ ok: true })
+  })
+
+  router.get('/sessions/:sessionId/permissions', (req, res) => {
+    res.json({ requests: permissions.pendingForSession(String(req.params.sessionId)) })
   })
 
   router.get('/sessions/:sessionId/messages', (req, res) => {

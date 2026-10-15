@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { Check, ChevronDown, ChevronRight, Circle, FolderKanban, GitBranch, MessageSquare, PanelLeft, PanelRightClose, Plus, Settings2, ShieldCheck, TerminalSquare, X } from 'lucide-react'
-import type { AttachmentInfo, ChatMessage, Project, ProjectFile, Session, View } from './types'
+import type { AttachmentInfo, ChatMessage, PermissionMode, PermissionRequest, Project, ProjectFile, Session, ToolStep, View } from './types'
 import { api, toUiProject, type AuthStatus, type CliStatus, type GitStatus, type MessageSearchResult, type ProjectRecord } from './lib/api'
 import { AuthGate } from './components/AuthGate'
 import { Sidebar, NavigationRail } from './components/Sidebar'
@@ -68,7 +68,18 @@ function App() {
   const [contextOpen, setContextOpen] = useState(() => window.innerWidth > 980)
   const [toast, setToast] = useState('')
   const [busy, setBusy] = useState(false)
-  const [activity, setActivity] = useState<string[]>([])
+  const [activity, setActivity] = useState<ToolStep[]>([])
+  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([])
+  const [permissionMode, setPermissionModeState] = useState<PermissionMode>(() => {
+    try {
+      const saved = window.localStorage.getItem('polar:permission-mode')
+      return saved === 'acceptEdits' || saved === 'plan' ? saved : 'ask'
+    } catch { return 'ask' }
+  })
+  const setPermissionMode = (mode: PermissionMode) => {
+    setPermissionModeState(mode)
+    try { window.localStorage.setItem('polar:permission-mode', mode) } catch { /* только удобство */ }
+  }
   const [projectBusy, setProjectBusy] = useState(false)
   const [cliStatus, setCliStatus] = useState<CliStatus | null>(null)
   const [activeController, setActiveController] = useState<AbortController | null>(null)
@@ -284,12 +295,16 @@ function App() {
     const userMessage: ChatMessage = { id: `local-${Date.now()}`, role: 'user', content, model, attachments: queuedAttachments, time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }
     const assistantId = `assistant-${Date.now()}`
     setActivity([])
+    setPermissionRequests([])
     setBusy(true)
     setMessages(current => [...current, userMessage, { id: assistantId, role: 'assistant', content: '', model, time: 'сейчас' }])
-    void api.streamMessage({ projectId: activeProject.id, sessionId: activeSession.id, content, model, webSearch, contextFiles: files.filter(file => file.kind === 'file' && file.context).map(file => file.path), attachmentIds: queuedAttachments.map(file => file.id) }, event => {
+    void api.streamMessage({ projectId: activeProject.id, sessionId: activeSession.id, content, model, webSearch, contextFiles: files.filter(file => file.kind === 'file' && file.context).map(file => file.path), attachmentIds: queuedAttachments.map(file => file.id), permissionMode }, event => {
       if (event.type === 'started' && !replay && queuedAttachments.length) setAttachmentQueues(current => ({ ...current, [queueKey]: [] }))
       if (event.type === 'delta') setMessages(current => current.map(message => message.id === assistantId ? { ...message, content: message.content + event.text } : message))
-      if (event.type === 'activity') setActivity(current => [...current, event.tool])
+      if (event.type === 'activity') setActivity(current => [...current, { tool: event.tool, summary: event.summary ?? '' }])
+      if (event.type === 'permission') setPermissionRequests(current => [...current.filter(item => item.id !== event.id), { id: event.id, tool: event.tool, summary: event.summary, detail: event.detail, createdAt: event.createdAt, state: 'pending' }])
+      if (event.type === 'permission_resolved') setPermissionRequests(current => current.map(item => item.id === event.id ? { ...item, state: event.behavior === 'allow' ? 'allowed' : event.reason === 'denied' ? 'denied' : 'expired' } : item))
+      if (event.type === 'done' || event.type === 'error') setPermissionRequests(current => current.map(item => item.state === 'pending' || item.state === 'sending' ? { ...item, state: 'expired' } : item))
       if (event.type === 'done') {
         setMessages(current => current.map(message => message.id === assistantId ? { ...message, inputTokens: event.inputTokens, outputTokens: event.outputTokens } : message))
         setBusy(false)
@@ -305,7 +320,19 @@ function App() {
         showToast(event.message)
       }
     }, error => { setBusy(false); setActiveController(null); setMessages(current => current.filter(message => message.id !== assistantId)); showToast(error.message) }).then(setActiveController)
-  }, [activeProject, activeSession, attachmentQueues, busy, files, refreshGit, showToast, uploadBusy])
+  }, [activeProject, activeSession, attachmentQueues, busy, files, permissionMode, refreshGit, showToast, uploadBusy])
+
+  const decidePermission = async (requestId: string, decision: 'allow' | 'deny') => {
+    if (!activeSession) return
+    setPermissionRequests(current => current.map(item => item.id === requestId ? { ...item, state: 'sending' } : item))
+    try {
+      await api.decidePermission(requestId, activeSession.id, decision)
+      setPermissionRequests(current => current.map(item => item.id === requestId && item.state === 'sending' ? { ...item, state: decision === 'allow' ? 'allowed' : 'denied' } : item))
+    } catch (cause) {
+      setPermissionRequests(current => current.map(item => item.id === requestId ? { ...item, state: 'expired' } : item))
+      showToast(cause instanceof Error ? cause.message : 'Не удалось отправить решение.')
+    }
+  }
 
   const retryMessage = useCallback((message: ChatMessage) => {
     const model = message.model === 'opus' || message.model === 'haiku' ? message.model : 'sonnet'
@@ -365,7 +392,7 @@ function App() {
       </header>
       <div className="workspace-subbar"><div className="view-tabs">{viewEntries.map(({ key, icon: Icon }) => <button key={key} className={`view-tab${view === key ? ' is-active' : ''}`} onClick={() => setView(key)}><Icon size={14} strokeWidth={1.9} /><span>{key === 'Source Control' ? 'Source Control' : key === 'Chat' ? 'Чат' : key === 'Terminal' ? 'Shell' : 'Файлы'}</span>{key === 'Source Control' && <span className="tab-count">{changes.length}</span>}</button>)}</div><div className="subbar-actions"><span className="subbar-session"><span className={`session-indicator session-${activeSession.status}`} />{activeSession.title}</span><button className="context-toggle icon-button" onClick={() => setContextOpen(current => !current)} aria-label="Переключить контекст" aria-expanded={contextOpen} title="Контекст"><PanelRightClose size={15} /></button><button className="new-session-button" onClick={() => { void createSession() }}><Plus size={14} /><span>Новый чат</span></button></div></div>
       <div className="workspace-body"><section className={`work-area work-area--${view.toLowerCase().replace(' ', '-')}`}>
-        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} attachments={pendingAttachments} uploadBusy={uploadBusy} webSearchAvailable={Boolean(cliStatus?.webSearchAvailable)} onUploadFiles={files => { void uploadFiles(files) }} onRemoveAttachment={removeQueuedAttachment} onSend={sendMessage} onResend={value => sendMessage(value)} onRetryLastMessage={retryMessage} onStop={stopMessage} />}
+        {view === 'Chat' && <ChatView project={activeProject} session={activeSession} contextCount={contextCount} messages={messages} busy={busy} activity={activity} permissionRequests={permissionRequests} onDecidePermission={(id, decision) => { void decidePermission(id, decision) }} permissionMode={permissionMode} onPermissionModeChange={setPermissionMode} attachments={pendingAttachments} uploadBusy={uploadBusy} webSearchAvailable={Boolean(cliStatus?.webSearchAvailable)} onUploadFiles={files => { void uploadFiles(files) }} onRemoveAttachment={removeQueuedAttachment} onSend={sendMessage} onResend={value => sendMessage(value)} onRetryLastMessage={retryMessage} onStop={stopMessage} />}
         {view === 'Terminal' && <Suspense fallback={<div className="file-loading">Загружаем терминал…</div>}><TerminalView project={activeProject} terminalId={terminalIds[activeProject.id] ?? null} onTerminalIdChange={updateTerminalId} /></Suspense>}
         {view === 'Files' && <FilesView projectId={activeProject.id} files={files} selectedFile={selectedFile} projectName={activeProject.name} branch={gitStatus?.branch ?? ''} onSelectFile={setSelectedFile} onRefresh={() => { void refreshFiles() }} />}
         {view === 'Source Control' && <SourceControlView status={gitStatus} onRefresh={() => { void refreshGit(activeProject.id) }} onInitialize={() => { void initializeGit() }} onToggleStaged={path => { void toggleStaged(path) }} onCommit={message => { void commitChanges(message) }} onOpenFile={path => { setSelectedFile(path); setView('Files') }} project={activeProject} />}

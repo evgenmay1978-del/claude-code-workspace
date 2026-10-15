@@ -1,4 +1,4 @@
-import type { AttachmentInfo, ChatMessage, Project, ProjectFile, Session } from '../types'
+import type { AttachmentInfo, ChatMessage, PermissionMode, PermissionRequest, Project, ProjectFile, Session, ToolStep } from '../types'
 
 export interface AuthStatus { initialized: boolean; authenticated: boolean; username?: string; csrfToken?: string }
 export interface SessionRecord { id: string; title: string; model: string; status: string; archived: boolean; createdAt: number; updatedAt: number }
@@ -11,7 +11,9 @@ export interface CliStatus { enabled: boolean; installed: boolean; version: stri
 export interface MessageSearchResult { id: string; role: 'user' | 'assistant'; snippet: string; createdAt: number; projectId: string; projectName: string; sessionId: string; sessionTitle: string }
 export type ChatStreamEvent = { type: 'started'; userMessageId: string; sessionId: string; cliSessionId: string; model: string; attachments?: AttachmentInfo[] }
   | { type: 'delta'; text: string }
-  | { type: 'activity'; tool: string }
+  | { type: 'activity'; tool: string; summary?: string }
+  | ({ type: 'permission' } & Omit<PermissionRequest, 'state'>)
+  | { type: 'permission_resolved'; id: string; behavior: 'allow' | 'deny'; reason: string }
   | { type: 'done'; sessionId: string; cliSessionId: string; inputTokens: number; outputTokens: number }
   | { type: 'error'; code: string; message: string }
 
@@ -56,7 +58,7 @@ function parseSseBlock(block: string): { event: string; data: unknown } | undefi
 }
 
 async function streamMessage(
-  input: { projectId: string; sessionId: string; content: string; model: 'sonnet' | 'opus' | 'haiku'; webSearch: boolean; contextFiles: string[]; attachmentIds: string[] },
+  input: { projectId: string; sessionId: string; content: string; model: 'sonnet' | 'opus' | 'haiku'; webSearch: boolean; contextFiles: string[]; attachmentIds: string[]; permissionMode: PermissionMode },
   onEvent: (event: ChatStreamEvent) => void,
   onError: (error: Error) => void,
 ): Promise<AbortController> {
@@ -122,6 +124,7 @@ export const api = {
     return (await requestJson<{ results: MessageSearchResult[] }>(`/api/claude/search?q=${encodeURIComponent(query)}`)).results
   },
   streamMessage,
+  decidePermission: (requestId: string, sessionId: string, decision: 'allow' | 'deny', message?: string) => requestJson<{ ok: boolean }>(`/api/claude/permissions/${encodeURIComponent(requestId)}`, { method: 'POST', body: JSON.stringify({ sessionId, decision, ...(message ? { message } : {}) }) }),
   async uploadAttachment(projectId: string, sessionId: string, file: File) {
     const headers = new Headers({ 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(file.name), 'x-file-type': file.type })
     addCsrf(headers, 'POST')
@@ -175,7 +178,7 @@ export const api = {
   gitCommit: (projectId: string, message: string) => requestJson<{ hash: string; message: string }>(`/api/projects/${encodeURIComponent(projectId)}/git/commit`, { method: 'POST', body: JSON.stringify({ message }) }),
   async messages(projectId: string, sessionId: string) {
     const result = await requestJson<{ messages: { id: string; role: string; content: unknown; model: string; inputTokens: number; outputTokens: number; createdAt: number }[] }>(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/messages`)
-    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), model: message.model, inputTokens: message.inputTokens, outputTokens: message.outputTokens, attachments: attachmentMetadata(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
+    return result.messages.map(message => ({ id: message.id, role: message.role === 'user' ? 'user' as const : 'assistant' as const, content: textContent(message.content), model: message.model, inputTokens: message.inputTokens, outputTokens: message.outputTokens, attachments: attachmentMetadata(message.content), steps: toolSteps(message.content), time: new Date(message.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) }))
   },
 }
 
@@ -184,6 +187,13 @@ function textContent(content: unknown): string {
   if (Array.isArray(content)) return content.map(block => block && typeof block === 'object' && 'text' in block && typeof block.text === 'string' ? block.text : '').filter(Boolean).join('\n\n')
   if (content && typeof content === 'object' && 'text' in content && typeof content.text === 'string') return content.text
   return ''
+}
+
+function toolSteps(content: unknown): ToolStep[] {
+  if (!Array.isArray(content)) return []
+  return content.flatMap(block => block && typeof block === 'object' && 'type' in block && block.type === 'tool_use' && 'name' in block && typeof block.name === 'string'
+    ? [{ tool: block.name, summary: 'summary' in block && typeof block.summary === 'string' ? block.summary : '' }]
+    : [])
 }
 
 function attachmentMetadata(content: unknown): AttachmentInfo[] {

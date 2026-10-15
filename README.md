@@ -84,6 +84,26 @@ The named data volumes survive rebuilds and container replacement. Do not run `s
 
 Run this at least once a month: `DISABLE_AUTOUPDATER=1` keeps the bundled Claude Code CLI pinned, and Anthropic periodically raises the minimum supported CLI version — a stale binary starts failing with an unclear error. After updating, check the in-app Terminal: `claude --version`.
 
+## Права Claude Code в чате
+
+Над полем ввода есть переключатель «Права»:
+
+| Режим | Что Claude Code делает сам | Что спрашивает |
+| --- | --- | --- |
+| **Спрашивать** (по умолчанию) | читает и ищет по файлам проекта | каждую правку файла, каждую команду shell и прочие действия |
+| **Правки сами** | читает и правит файлы проекта | команды shell и прочие действия |
+| **Только чтение** | читает и предлагает план | ничего не меняет |
+
+Запрос разрешения появляется в чате карточкой: для команды показан её точный текст, для правки — дифф, для новой
+записи — содержимое файла. «Разрешить» выполняет действие, «Отклонить» сообщает Claude Code об отказе, и он
+продолжает без этого шага. Без ответа запрос автоматически отклоняется через 10 минут, а при остановке ответа или
+закрытии страницы — сразу. Все шаги ответа сохраняются в истории («Действия Claude Code»).
+
+Как это устроено: CLI запускается с `--permission-prompt-tool mcp__polar__approve`. Встроенный MCP-сервер
+(`server/claude/permission-mcp.ts`, без сторонних зависимостей) пересылает запрос на внутренний маршрут
+`/_internal/claude/permission`, который принимает только loopback-соединения и одноразовый токен текущего запуска.
+Токен передаётся через временный mcp-config с правами 0600 и удаляется по завершении запуска.
+
 ## Mobile / PWA installation
 
 Open the HTTPS address on the phone after signing in:

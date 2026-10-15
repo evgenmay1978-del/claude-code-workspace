@@ -32,6 +32,24 @@ export interface ChatMessage {
   inputTokens?: number
   outputTokens?: number
   attachments?: AttachmentInfo[]
+  steps?: ToolStep[]
+}
+
+export interface ToolStep {
+  tool: string
+  summary: string
+}
+
+export type PermissionMode = 'ask' | 'acceptEdits' | 'plan'
+
+export interface PermissionRequest {
+  id: string
+  tool: string
+  summary: string
+  detail: string
+  createdAt: number
+  /** Локальное состояние карточки после ответа владельца. */
+  state?: 'pending' | 'sending' | 'allowed' | 'denied' | 'expired'
 }
 
 export interface AttachmentInfo {

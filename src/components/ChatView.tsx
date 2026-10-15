@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react'
-import { ArrowDown, ArrowDownToLine, ArrowUp, Check, CheckCheck, ChevronDown, Copy, FileText, FileType2, Globe2, Image, Paperclip, Pencil, RefreshCw, ShieldCheck, Square, X } from 'lucide-react'
-import type { AttachmentInfo, ChatMessage, Project, Session } from '../types'
+import { ArrowDown, ArrowDownToLine, ArrowUp, Check, CheckCheck, ChevronDown, Copy, FileText, FileType2, Globe2, Image, Paperclip, Pencil, RefreshCw, ShieldAlert, ShieldCheck, Square, Wrench, X } from 'lucide-react'
+import type { AttachmentInfo, ChatMessage, PermissionMode, PermissionRequest, Project, Session, ToolStep } from '../types'
 import { api } from '../lib/api'
 import { MarkdownContent } from './MarkdownContent'
 
 type Model = 'sonnet' | 'opus' | 'haiku'
 
-export function ChatView({ project, session, contextCount, messages, busy, activity, attachments, uploadBusy, webSearchAvailable, onUploadFiles, onRemoveAttachment, onSend, onResend, onRetryLastMessage, onStop }: {
+export function ChatView({ project, session, contextCount, messages, busy, activity, permissionRequests, onDecidePermission, permissionMode, onPermissionModeChange, attachments, uploadBusy, webSearchAvailable, onUploadFiles, onRemoveAttachment, onSend, onResend, onRetryLastMessage, onStop }: {
   project: Project
   session: Session
   contextCount: number
   messages: ChatMessage[]
   busy: boolean
-  activity: string[]
+  activity: ToolStep[]
+  permissionRequests: PermissionRequest[]
+  onDecidePermission: (requestId: string, decision: 'allow' | 'deny') => void
+  permissionMode: PermissionMode
+  onPermissionModeChange: (mode: PermissionMode) => void
   attachments: AttachmentInfo[]
   uploadBusy: boolean
   webSearchAvailable: boolean
@@ -52,7 +56,7 @@ export function ChatView({ project, session, contextCount, messages, busy, activ
       container.scrollTop = container.scrollHeight
       setIsAtBottom(true)
     }
-  }, [messages, busy, activity])
+  }, [messages, busy, activity, permissionRequests])
 
   const send = () => {
     const value = draft.trim()
@@ -115,12 +119,14 @@ export function ChatView({ project, session, contextCount, messages, busy, activ
         <div className={`message-avatar message-avatar--${message.role}`}>{message.role === 'assistant' ? <span className="mini-claude-mark"><i /><i /><i /><i /></span> : 'Я'}</div>
         <div className="message-content-wrap"><div className="message-meta"><strong>{message.role === 'assistant' ? 'Claude' : 'Вы'}</strong>{message.role === 'assistant' && <span className="message-model">{message.model ?? model}</span>}<span className="message-time">{message.time}</span></div>
           {message.attachments?.length ? <div className="message-attachments">{message.attachments.map(file => <a key={file.id} className="message-attachment" href={api.attachmentDownloadUrl(project.id, file.id)} download={file.name}><AttachmentIcon mimeType={file.mimeType} /><span><strong>{file.name}</strong><small>{formatBytes(file.byteSize)}</small></span><ArrowDownToLine size={14} /></a>)}</div> : null}
+          {message.steps?.length ? <details className="message-steps"><summary><Wrench size={12} /> Действия Claude Code: {message.steps.length}</summary><ol>{message.steps.map((step, stepIndex) => <li key={stepIndex}><strong>{toolLabel(step.tool)}</strong>{step.summary && <code>{step.summary}</code>}</li>)}</ol></details> : null}
           {message.content && <div className="message-body"><MarkdownContent source={message.content} /></div>}
           {message.role === 'user' && message.id === lastUserMessage?.id && !busy && <div className="message-actions"><button onClick={() => editMessage(message)} aria-label="Исправить последний запрос"><Pencil size={13} /> Исправить</button><button onClick={() => onRetryLastMessage(message)} aria-label="Повторить последний запрос"><RefreshCw size={13} /> Повторить</button></div>}
           {message.role === 'assistant' && !busy && message.content.trim() && <div className="message-reactions"><button onClick={() => void copyAnswer(message)} aria-label="Скопировать ответ"><Copy size={13} />{copyFeedback?.id === message.id ? copyFeedback.copied ? 'Скопировано' : 'Не скопировано' : 'Копировать ответ'}</button>{index === messages.length - 1 && <button onClick={() => onResend('Продолжи с текущего результата и предложи следующий небольшой шаг.')}><RefreshCw size={13} /> Продолжить</button>}{(message.inputTokens || message.outputTokens) ? <span className="message-token-usage" title="Использование токенов, сообщённое Claude Code CLI">CLI: {formatTokens(message.inputTokens ?? 0)} вход · {formatTokens(message.outputTokens ?? 0)} выход</span> : null}{index === messages.length - 1 && <span><CheckCheck size={12} /> История сохранена</span>}</div>}
         </div>
       </article>)}{busy && <div className="message message--assistant"><div className="message-avatar message-avatar--assistant"><span className="mini-claude-mark"><i /><i /><i /><i /></span></div><div className="message-content-wrap"><div className="message-meta"><strong>Claude Code</strong><span className="message-model">{model}</span><span className="message-time">сейчас</span></div><div className="typing-indicator"><span /><span /><span /> <small>собирает ответ…</small></div></div></div>}
-      {busy && activity.length > 0 && <div className="activity-feed" aria-live="polite"><span className="activity-feed-label">Ход работы</span>{activity.slice(-4).map((item, index) => <span key={`${item}-${index}`}><Check size={11} /> {item}</span>)}</div>}
+      {busy && activity.length > 0 && <div className="activity-feed" aria-live="polite"><span className="activity-feed-label">Ход работы</span>{activity.slice(-6).map((item, index) => <span key={`${item.tool}-${index}`}><Check size={11} /> <strong>{toolLabel(item.tool)}</strong>{item.summary && <code>{item.summary}</code>}</span>)}</div>}
+      {permissionRequests.length > 0 && <div className="permission-list" aria-live="assertive">{permissionRequests.map(request => <PermissionCard key={request.id} request={request} onDecide={onDecidePermission} />)}</div>}
       {busy && messages.at(-1)?.role !== 'assistant' && <div className="message message--assistant"><div className="message-avatar message-avatar--assistant"><span className="mini-claude-mark"><i /><i /><i /><i /></span></div><div className="message-content-wrap"><div className="typing-indicator"><span /><span /><span /> <small>Claude Code отвечает…</small></div></div></div>}
       </div>
     </div>
@@ -133,9 +139,30 @@ export function ChatView({ project, session, contextCount, messages, busy, activ
         <label className={`composer-context composer-attach${uploadBusy ? ' is-busy' : ''}`} title="Прикрепить файл"><Paperclip size={14} /><span>{uploadBusy ? 'Загрузка…' : 'Файл'}</span><input type="file" multiple accept=".txt,.md,.mdx,.csv,.json,.pdf,.png,.jpg,.jpeg,.webp" disabled={busy || uploadBusy || attachments.length >= 8} onChange={event => { if (event.target.files) pickFiles(event.target.files); event.target.value = '' }} /></label>
         <button className={`composer-context${webSearch ? ' is-active' : ''}${!webSearchAvailable ? ' is-unavailable' : ''}`} onClick={() => webSearchAvailable && setWebSearch(current => !current)} aria-pressed={webSearch} disabled={!webSearchAvailable} title={webSearchAvailable ? 'Разрешить веб-поиск штатными инструментами Claude Code' : 'Веб-поиск CLI недоступен на этом сервере'}><Globe2 size={13} /><span>Поиск</span></button>
         <button className="composer-context" title="Файлы проекта, включённые в контекст"><FileType2 size={13} /><span>{contextCount} в контексте</span><ChevronDown size={12} /></button>
+        <label className={`model-select permission-select permission-select--${permissionMode}`} title="Что Claude Code может делать без вашего подтверждения"><ShieldCheck size={12} /><select aria-label="Права Claude Code" value={permissionMode} disabled={busy} onChange={event => onPermissionModeChange(event.target.value as PermissionMode)}><option value="ask">Спрашивать</option><option value="acceptEdits">Правки сами</option><option value="plan">Только чтение</option></select><ChevronDown size={11} /></label>
         <label className="model-select"><span className="model-orb" /><select aria-label="Модель Claude" value={model} onChange={event => setModel(event.target.value as Model)}><option value="sonnet">Sonnet</option><option value="opus">Opus</option><option value="haiku">Haiku</option></select><ChevronDown size={11} /></label>
       </div><div className="composer-send-wrap">{busy ? <button className="send-button send-button--stop" onClick={onStop} aria-label="Остановить ответ"><Square size={13} /></button> : <><span className="composer-hint"><kbd>⌘</kbd><kbd>↵</kbd></span><button className={`send-button${draft.trim() || attachments.length ? ' send-button--ready' : ''}`} onClick={send} disabled={(!draft.trim() && !attachments.length) || uploadBusy} aria-label="Отправить сообщение"><ArrowUp size={16} /></button></>}</div></div></div><div className="composer-disclaimer"><span><ShieldCheck size={12} /> Выполнение на сервере владельца</span><span>{sessionUsage.input || sessionUsage.output ? `CLI · ${formatTokens(sessionUsage.input)} вход / ${formatTokens(sessionUsage.output)} выход токенов в этом чате` : busy ? 'Ответ поступает потоково' : 'Лимиты — по вашей подписке Claude Code'}</span></div></div>
   </div>
+}
+
+const toolNames: Record<string, string> = {
+  Bash: 'Команда', Edit: 'Правка', MultiEdit: 'Правки', Write: 'Запись файла', Read: 'Чтение', Glob: 'Поиск файлов', Grep: 'Поиск в коде',
+  LS: 'Список', WebSearch: 'Веб-поиск', WebFetch: 'Загрузка страницы', TodoWrite: 'План', NotebookEdit: 'Правка notebook', Task: 'Подзадача',
+}
+
+function toolLabel(tool: string): string {
+  return toolNames[tool] ?? tool
+}
+
+function PermissionCard({ request, onDecide }: { request: PermissionRequest; onDecide: (requestId: string, decision: 'allow' | 'deny') => void }) {
+  const state = request.state ?? 'pending'
+  const status = state === 'allowed' ? 'Разрешено' : state === 'denied' ? 'Отклонено' : state === 'expired' ? 'Запрос закрыт' : state === 'sending' ? 'Отправляем…' : null
+  return <section className={`permission-card permission-card--${state}`} aria-label={`Запрос разрешения: ${toolLabel(request.tool)}`}>
+    <header><ShieldAlert size={15} /><strong>Claude Code просит разрешение</strong><span className="permission-tool">{toolLabel(request.tool)}</span></header>
+    {request.summary && <p className="permission-summary"><code>{request.summary}</code></p>}
+    {request.detail && <details open={request.tool === 'Bash' || request.tool === 'Edit' || request.tool === 'MultiEdit'}><summary>Что именно будет сделано</summary><pre>{request.detail}</pre></details>}
+    {status ? <div className="permission-status">{status}</div> : <div className="permission-actions"><button type="button" className="button-secondary" onClick={() => onDecide(request.id, 'deny')}><X size={14} /> Отклонить</button><button type="button" className="button-primary" onClick={() => onDecide(request.id, 'allow')}><Check size={14} /> Разрешить</button></div>}
+  </section>
 }
 
 function AttachmentIcon({ mimeType }: { mimeType: string }) {
