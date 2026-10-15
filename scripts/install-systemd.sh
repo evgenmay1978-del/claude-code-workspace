@@ -72,6 +72,23 @@ echo "node $("$NODE_BIN" -v), pnpm $(pnpm -v)"
 step "Сборка в $SRC"
 cd "$SRC"
 pnpm install --frozen-lockfile
+
+# Готовый бинарник node-pty@1.1.0 на части систем падает с SIGSEGV при require
+# (ломает и терминал, и тесты). Проверяем в отдельном процессе и при сбое
+# собираем модуль из исходников.
+pty_ok() { (cd "$SRC" && "$NODE_BIN" -e "require('node-pty')") >/dev/null 2>&1; }
+if ! pty_ok; then
+  step "node-pty: готовый бинарник не загружается — сборка из исходников"
+  if ! command -v g++ >/dev/null || ! command -v make >/dev/null || ! command -v python3 >/dev/null; then
+    command -v apt-get >/dev/null || fail "нужны g++, make и python3 для сборки node-pty."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential python3
+  fi
+  PTY_DIR="$(cd "$SRC" && "$NODE_BIN" -p "require('path').dirname(require.resolve('node-pty/package.json'))")"
+  (cd "$PTY_DIR" && npm rebuild --build-from-source)
+  pty_ok || fail "node-pty не загружается даже после сборки из исходников."
+fi
+echo "node-pty: загружается"
+
 pnpm build
 if [ "$SKIP_TESTS" -eq 0 ]; then
   step "Тесты"
