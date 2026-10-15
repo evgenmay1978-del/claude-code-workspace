@@ -16,11 +16,12 @@ const viewEntries: { key: View; icon: typeof MessageSquare }[] = [
   { key: 'Chat', icon: MessageSquare }, { key: 'Terminal', icon: TerminalSquare }, { key: 'Files', icon: FolderKanban }, { key: 'Source Control', icon: GitBranch },
 ]
 
-function NewProjectModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
+function NewProjectModal({ onClose, onCreate, hostPathsAllowed }: { onClose: () => void; onCreate: (name: string, path?: string) => void; hostPathsAllowed: boolean }) {
   const [name, setName] = useState('')
+  const [path, setPath] = useState('')
   useEffect(() => { const handler = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler) }, [onClose])
-  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><form className="new-project-modal" onSubmit={event => { event.preventDefault(); if (name.trim()) onCreate(name.trim()) }}>
-    <div className="new-project-icon"><Plus size={17} /></div><button type="button" className="icon-button new-project-close" onClick={onClose} aria-label="Закрыть"><X size={16} /></button><span className="modal-kicker">НОВОЕ ПРОСТРАНСТВО</span><h2>Добавить проект</h2><p>Проект создаёт отдельную папку и личные сессии на вашем сервере.</p><label htmlFor="project-name">Название проекта</label><input id="project-name" autoFocus value={name} onChange={event => setName(event.target.value)} placeholder="Например, northstar" maxLength={64} /><div className="project-folder-preview"><span className="folder-preview-icon"><GitBranch size={15} /></span><span><strong>Личный workspace</strong><small>Файлы сохраняются в вашем контейнере</small></span><ShieldCheck size={14} /></div><div className="new-project-actions"><button type="button" className="button-secondary" onClick={onClose}>Отмена</button><button type="submit" className="button-primary" disabled={!name.trim()}>Создать проект <ChevronRight size={14} /></button></div>
+  return <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}><form className="new-project-modal" onSubmit={event => { event.preventDefault(); if (name.trim()) onCreate(name.trim(), path.trim() || undefined) }}>
+    <div className="new-project-icon"><Plus size={17} /></div><button type="button" className="icon-button new-project-close" onClick={onClose} aria-label="Закрыть"><X size={16} /></button><span className="modal-kicker">НОВОЕ ПРОСТРАНСТВО</span><h2>Добавить проект</h2><p>Проект создаёт отдельную папку и личные сессии на вашем сервере.</p><label htmlFor="project-name">Название проекта</label><input id="project-name" autoFocus value={name} onChange={event => setName(event.target.value)} placeholder="Например, northstar" maxLength={64} />{hostPathsAllowed && <><label htmlFor="project-path">Папка на сервере (необязательно)</label><input id="project-path" value={path} onChange={event => setPath(event.target.value)} placeholder="/root/maestro-memory — пусто: новая папка" maxLength={1024} autoCapitalize="off" autoCorrect="off" spellCheck={false} /></>}<div className="project-folder-preview"><span className="folder-preview-icon"><GitBranch size={15} /></span><span><strong>{path.trim() ? 'Существующая папка' : 'Личный workspace'}</strong><small>{path.trim() ? 'Claude Code будет работать прямо в ней' : 'Новая папка на вашем сервере'}</small></span><ShieldCheck size={14} /></div><div className="new-project-actions"><button type="button" className="button-secondary" onClick={onClose}>Отмена</button><button type="submit" className="button-primary" disabled={!name.trim()}>Создать проект <ChevronRight size={14} /></button></div>
   </form></div>
 }
 
@@ -85,6 +86,7 @@ function App() {
   const [activeController, setActiveController] = useState<AbortController | null>(null)
   const [terminalIds, setTerminalIds] = useState<Record<string, string>>({})
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
+  const [hostPathsAllowed, setHostPathsAllowed] = useState(false)
 
   const activeProject = projects.find(project => project.id === activeProjectId) ?? null
   const activeSession = activeProject?.sessions.find(session => session.id === activeSessionId) ?? activeProject?.sessions[0] ?? null
@@ -126,6 +128,7 @@ function App() {
     setWorkspaceError('')
     try {
       const result = await api.listProjects()
+      setHostPathsAllowed(Boolean(result.hostPathsAllowed))
       const mapped = result.projects.map(toUiProject)
       setProjects(mapped)
       setActiveProjectId(current => mapped.some(project => project.id === current) ? current : mapped[0]?.id ?? '')
@@ -233,10 +236,10 @@ function App() {
     } catch (cause) { showToast(cause instanceof Error ? cause.message : 'Не удалось переименовать чат.') }
   }
 
-  const createProject = async (name: string) => {
+  const createProject = async (name: string, path?: string) => {
     setProjectBusy(true)
     try {
-      const created: ProjectRecord = await api.createProject(name)
+      const created: ProjectRecord = await api.createProject(name, '', path)
       const project = toUiProject(created)
       setProjects(current => [project, ...current])
       setActiveProjectId(project.id)
@@ -379,7 +382,7 @@ function App() {
   if (!auth) return <LoadingScreen label={workspaceError || 'Проверяем защищённое web-пространство…'} />
   if (!auth.authenticated) return <AuthGate initialized={auth.initialized} onSuccess={() => { void refreshAuth() }} />
   if (!workspaceLoaded) return <LoadingScreen label="Загружаем проекты и историю чатов…" />
-  if (projects.length === 0) return <><FirstProject onCreate={() => setCreateProjectOpen(true)} busy={projectBusy} error={workspaceError} />{createProjectOpen && <NewProjectModal onClose={() => setCreateProjectOpen(false)} onCreate={name => { void createProject(name) }} />}</>
+  if (projects.length === 0) return <><FirstProject onCreate={() => setCreateProjectOpen(true)} busy={projectBusy} error={workspaceError} />{createProjectOpen && <NewProjectModal hostPathsAllowed={hostPathsAllowed} onClose={() => setCreateProjectOpen(false)} onCreate={(name, path) => { void createProject(name, path) }} />}</>
   if (!activeProject || !activeSession) return <LoadingScreen label="Открываем проект…" />
 
   return <div className={`app-shell${sidebarOpen ? ' sidebar-is-open' : ''}${!contextOpen ? ' context-is-closed' : ''}`}>
@@ -404,7 +407,7 @@ function App() {
     </main>
     {sidebarOpen && <button className="mobile-overlay" onClick={() => setSidebarOpen(false)} aria-label="Закрыть боковую панель" />}
     {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} username={username} cliStatus={cliStatus} onLogout={() => { setSettingsOpen(false); setAuth(current => current ? { ...current, authenticated: false, csrfToken: undefined } : current); setProjects([]); setActiveProjectId(''); setActiveSessionId(''); setMessages([]) }} />}
-    {createProjectOpen && <NewProjectModal onClose={() => setCreateProjectOpen(false)} onCreate={name => { void createProject(name) }} />}
+    {createProjectOpen && <NewProjectModal hostPathsAllowed={hostPathsAllowed} onClose={() => setCreateProjectOpen(false)} onCreate={(name, path) => { void createProject(name, path) }} />}
     {toast && <div className="toast"><span><Check size={13} /></span>{toast}</div>}
   </div>
 }

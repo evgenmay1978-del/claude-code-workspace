@@ -12,6 +12,8 @@ export interface WorkspaceFileEntry {
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_DEPTH = 12
+// Каталоги сервера (например, /root) бывают огромными — список ограничен, чтобы не вешать API.
+const MAX_ENTRIES = 5000
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.git', '.polar', '.cache', 'dist', 'dist-server', 'coverage', '.next', '.venv', '__pycache__', '.turbo'])
 const SECRET_FILE = /^\.env(?:\..*)?$/i
 
@@ -37,11 +39,12 @@ export function listWorkspaceFiles(workspaceRoot: string): WorkspaceFileEntry[] 
   const entries: WorkspaceFileEntry[] = []
 
   const walk = (directory: string, depth: number): void => {
-    if (depth > MAX_DEPTH) return
+    if (depth > MAX_DEPTH || entries.length >= MAX_ENTRIES) return
     let children: Dirent[]
     try { children = readdirSync(directory, { withFileTypes: true }) } catch { return }
     children.sort((left, right) => left.name.localeCompare(right.name))
     for (const child of children) {
+      if (entries.length >= MAX_ENTRIES) return
       if (child.isSymbolicLink()) continue
       const absolute = join(directory, child.name)
       const relativePath = relative(root, absolute).split(sep).join('/')

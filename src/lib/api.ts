@@ -143,9 +143,9 @@ export const api = {
     return result.session
   },
   closeTerminal: (terminalId: string) => requestJson<void>(`/api/terminal/sessions/${encodeURIComponent(terminalId)}`, { method: 'DELETE' }),
-  listProjects: () => requestJson<{ projects: ProjectRecord[] }>('/api/projects'),
-  async createProject(name: string, description = '') {
-    const result = await requestJson<{ project: ProjectRecord }>('/api/projects', { method: 'POST', body: JSON.stringify({ name, description }) })
+  listProjects: () => requestJson<{ projects: ProjectRecord[]; hostPathsAllowed?: boolean }>('/api/projects'),
+  async createProject(name: string, description = '', path?: string) {
+    const result = await requestJson<{ project: ProjectRecord }>('/api/projects', { method: 'POST', body: JSON.stringify({ name, description, ...(path ? { path } : {}) }) })
     return result.project
   },
   async updateProject(id: string, changes: Partial<Pick<ProjectRecord, 'name' | 'description' | 'instructions' | 'defaultModel'>>) {

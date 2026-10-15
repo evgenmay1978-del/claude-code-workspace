@@ -8,8 +8,9 @@ import { workspacesDirectory } from '../db.js'
 import { requireCsrf } from '../auth/router.js'
 import { listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile } from '../workspaces/files.js'
 import { UnsafeWorkspacePathError } from '../workspaces/paths.js'
+import { excludePolarFromGit, HostPathError, hostPathsAllowed, resolveHostProjectPath } from '../workspaces/host-paths.js'
 
-const newProjectSchema = z.object({ name: z.string().trim().min(1).max(64), description: z.string().trim().max(500).optional() }).strict()
+const newProjectSchema = z.object({ name: z.string().trim().min(1).max(64), description: z.string().trim().max(500).optional(), path: z.string().trim().min(1).max(1024).optional() }).strict()
 const updateProjectSchema = z.object({ name: z.string().trim().min(1).max(64).optional(), description: z.string().trim().max(500).optional(), instructions: z.string().max(20_000).optional(), defaultModel: z.string().max(128).optional() }).strict().refine(value => Object.keys(value).length > 0)
 const newSessionSchema = z.object({ title: z.string().trim().min(1).max(120).optional(), model: z.string().max(128).optional() }).strict()
 const updateSessionSchema = z.object({ title: z.string().trim().min(1).max(120).optional(), archived: z.boolean().optional() }).strict().refine(value => Object.keys(value).length > 0)
@@ -42,7 +43,7 @@ export function createProjectsRouter(db: AppDatabase): Router {
 
   router.get('/', (_req, res) => {
     const projects = db.prepare('SELECT id,name,description,instructions,workspace_path,default_model,created_at,updated_at FROM projects ORDER BY updated_at DESC').all() as ProjectRow[]
-    res.json({ projects: projects.map(project => projectResponse(db, project)) })
+    res.json({ projects: projects.map(project => projectResponse(db, project)), hostPathsAllowed: hostPathsAllowed() })
   })
 
   router.post('/', (req, res) => {
@@ -50,8 +51,15 @@ export function createProjectsRouter(db: AppDatabase): Router {
     if (!parsed.success) return res.status(400).json({ error: 'invalid_project', message: 'Название проекта обязательно и не должно превышать 64 символа.' })
     const id = randomUUID()
     const now = Date.now()
-    const workspace = join(workspacesDirectory, id)
-    mkdirSync(workspace, { recursive: true, mode: 0o700 })
+    let workspace = join(workspacesDirectory, id)
+    if (parsed.data.path) {
+      try { workspace = resolveHostProjectPath(parsed.data.path) }
+      catch (error) { return res.status(400).json({ error: 'invalid_project_path', message: error instanceof HostPathError ? error.message : 'Каталог недоступен.' }) }
+      if (db.prepare('SELECT 1 FROM projects WHERE workspace_path=?').get(workspace)) return res.status(409).json({ error: 'project_path_taken', message: 'Для этого каталога уже есть проект.' })
+      excludePolarFromGit(workspace)
+    } else {
+      mkdirSync(workspace, { recursive: true, mode: 0o700 })
+    }
     const sessionId = randomUUID()
     const name = parsed.data.name
     db.transaction(() => {

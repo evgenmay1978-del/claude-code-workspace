@@ -71,6 +71,23 @@ The app container runs as UID 10001, is read-only except for its explicit data v
 
 The web-app password and Claude Code CLI login are separate. The first protects this workspace; the second is handled by the unmodified CLI. If a CLI session expires, sign in again through `claude` in the in-app Terminal.
 
+### Install without Docker (systemd, behind an existing nginx)
+
+Для сервера, где уже работает nginx и Docker нежелателен (например, из-за правил iptables):
+
+```bash
+sudo ./scripts/install-systemd.sh --origin https://claude.example.com:8911 --port 3020 --run-as root
+```
+
+Скрипт собирает проект, прогоняет тесты, создаёт `/etc/polar-workspace.env` (0600) и `polar-workspace.service`,
+который слушает только `127.0.0.1:<порт>`. nginx, firewall, DNS и сертификаты он не трогает: блок `server`
+для публикации — в `deploy/nginx-polar-workspace.conf.example` (SNI на уже открытом TLS-порту, SSE и WebSocket).
+
+- `--run-as root` — полный доступ: тот же логин Claude Code, что у root (`/root/.claude`), домашний каталог `/root`,
+  в окне «Добавить проект» можно указать существующую папку сервера (`POLAR_ALLOW_HOST_PATHS=1`).
+  Пароль Workspace тогда защищает root-доступ к серверу — включите и `auth_basic` в nginx.
+- `--run-as polar` — отдельный непривилегированный пользователь и свой логин Claude Code.
+
 ### Update
 
 From the checkout, fetch the latest approved changes and rebuild the service:

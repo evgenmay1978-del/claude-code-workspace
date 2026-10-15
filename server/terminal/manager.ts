@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
-import { resolve, sep } from 'node:path'
+import { resolve } from 'node:path'
 import { spawn as spawnPty, type IPty } from 'node-pty'
 import type { RawData, WebSocket } from 'ws'
 import type { AppDatabase } from '../db.js'
 import { workspacesDirectory } from '../db.js'
 import { cliConfigDirectory } from '../claude/runner.js'
+import { isAllowedProjectRoot } from '../workspaces/host-paths.js'
 
 type ProjectRow = { id: string; workspace_path: string }
 type TerminalRecord = { id: string; ownerId: string; projectId: string; process: IPty; clients: Set<WebSocket>; history: string; createdAt: number; lastActivity: number; dispose: () => void }
@@ -44,8 +45,7 @@ export class TerminalManager {
     const project = this.db.prepare('SELECT id,workspace_path FROM projects WHERE id=?').get(projectId) as ProjectRow | undefined
     if (!project) throw new Error('project_not_found')
     const cwd = resolve(project.workspace_path || workspacesDirectory)
-    const base = resolve(workspacesDirectory)
-    if (cwd !== base && !cwd.startsWith(`${base}${sep}`)) throw new Error('invalid_workspace_path')
+    if (!isAllowedProjectRoot(cwd)) throw new Error('invalid_workspace_path')
     if (!statSync(cwd).isDirectory()) throw new Error('invalid_workspace_path')
 
     const id = randomUUID()

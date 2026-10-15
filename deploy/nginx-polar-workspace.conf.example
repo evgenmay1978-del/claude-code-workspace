@@ -1,0 +1,58 @@
+# Polar Workspace за существующим nginx (без Caddy и без Docker).
+#
+# Подставьте:
+#   LISTEN_PORT  — публичный TLS-порт nginx, на котором уже есть другие сайты (SNI),
+#                  например 8911; PUBLIC_ORIGIN в /etc/polar-workspace.env должен
+#                  содержать этот порт: https://claude.wapmixx.ru:8911
+#   SERVER_NAME  — claude.wapmixx.ru (A-запись на сервер)
+#   CERT / KEY   — сертификат именно для SERVER_NAME
+#   APP_PORT     — порт из install-systemd.sh (--port), по умолчанию 3020
+#
+# Порядок, не затрагивающий остальные сайты:
+#   cp -a /etc/nginx /root/nginx-backup-$(date +%Y%m%d-%H%M%S)
+#   cp этот-файл /etc/nginx/conf.d/polar-workspace.conf   (или sites-available + symlink)
+#   nginx -t && systemctl reload nginx                     (reload, НЕ restart)
+#   curl -sS https://SERVER_NAME:LISTEN_PORT/_app/health
+# Откат: rm /etc/nginx/conf.d/polar-workspace.conf && nginx -t && systemctl reload nginx
+
+map $http_upgrade $polar_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen LISTEN_PORT ssl;
+    http2 on;   # nginx < 1.25.1: удалите эту строку и пишите "listen LISTEN_PORT ssl http2;"
+    server_name SERVER_NAME;
+
+    ssl_certificate     CERT;
+    ssl_certificate_key KEY;
+
+    # Второй замок перед сайтом (рекомендуется, если Workspace работает от root):
+    #   htpasswd -c /etc/nginx/polar-workspace.htpasswd owner   (пакет apache2-utils)
+    # auth_basic           "Polar Workspace";
+    # auth_basic_user_file /etc/nginx/polar-workspace.htpasswd;
+
+    client_max_body_size 25m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host:$server_port;
+        proxy_set_header X-Forwarded-Host  $host:$server_port;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Real-IP         $remote_addr;
+
+        # Терминал (WebSocket).
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection $polar_connection_upgrade;
+
+        # Потоковые ответы Claude Code (SSE) и долгие ожидания подтверждений.
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
